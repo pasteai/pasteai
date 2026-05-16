@@ -1,0 +1,143 @@
+version: 2
+
+release:
+  github:
+    owner: pasteai
+    name: pasteai
+
+builds:
+  - id: pasteai
+    main: ./cmd/pasteai
+    binary: pasteai
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: pasteai
+    name_template: "pasteai_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "pasteai_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+# Homebrew tap — requires pasteai/homebrew-pasteai repo
+brews:
+  - name: pasteai
+    repository:
+      owner: pasteai
+      name: homebrew-pasteai
+      token: "{{ .Env.GORELEASER_GITHUB_TOKEN }}"
+    commit_author:
+      name: pasteai-bot
+      email: bot@pasteai.ai
+    homepage: https://github.com/pasteai/pasteai
+    description: AI publishes markdown documents via MCP. You read them in a clean, themed web UI.
+    license: MIT
+    install: |
+      bin.install "pasteai"
+    test: |
+      system "#{bin}/pasteai", "version"
+
+# Scoop bucket — requires pasteai/scoop-pasteai repo
+scoops:
+  - name: pasteai
+    repository:
+      owner: pasteai
+      name: scoop-pasteai
+      token: "{{ .Env.GORELEASER_GITHUB_TOKEN }}"
+    commit_author:
+      name: pasteai-bot
+      email: bot@pasteai.ai
+    homepage: https://github.com/pasteai/pasteai
+    description: AI publishes markdown documents via MCP. You read them in a clean, themed web UI.
+    license: MIT
+
+# Linux packages (deb + rpm) — published as GitHub Release assets
+nfpms:
+  - id: pasteai
+    package_name: pasteai
+    vendor: PasteAI
+    homepage: https://github.com/pasteai/pasteai
+    maintainer: PasteAI <hello@pasteai.ai>
+    description: AI publishes markdown documents via MCP. You read them in a clean, themed web UI.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: ./LICENSE
+        dst: /usr/share/doc/pasteai/LICENSE
+
+dockers:
+  - image_templates:
+      - "ghcr.io/pasteai/pasteai:{{ .Tag }}-amd64"
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile.release
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+
+  - image_templates:
+      - "ghcr.io/pasteai/pasteai:{{ .Tag }}-arm64"
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile.release
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+
+docker_manifests:
+  - name_template: "ghcr.io/pasteai/pasteai:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/pasteai/pasteai:{{ .Tag }}-amd64"
+      - "ghcr.io/pasteai/pasteai:{{ .Tag }}-arm64"
+
+  - name_template: "ghcr.io/pasteai/pasteai:latest"
+    image_templates:
+      - "ghcr.io/pasteai/pasteai:{{ .Tag }}-amd64"
+      - "ghcr.io/pasteai/pasteai:{{ .Tag }}-arm64"
+
+changelog:
+  disable: true  # Release Please manages the changelog
+
+# MCP Registry — publishes server.json to modelcontextprotocol/registry
+mcp:
+  name: io.github.pasteai/pasteai
+  title: "PasteAI"
+  description: "Publish markdown documents from AI — Claude calls publish_document and gets back a shareable URL."
+  homepage: "https://github.com/pasteai/pasteai"
+
+  auth:
+    type: github-oidc
+    token: "{{ .Env.GITHUB_TOKEN }}"
+
+  repository:
+    url: "https://github.com/pasteai/pasteai"
+    source: github
+
+  packages:
+    - registry_type: go
+      identifier: "github.com/pasteai/pasteai/cmd/pasteai"
+      transport:
+        type: stdio
+    - registry_type: oci
+      identifier: "ghcr.io/pasteai/pasteai:{{ .Version }}"
+      transport:
+        type: stdio

@@ -1,0 +1,15 @@
+{{template "base.html" .}}
+
+{{define "title"}}Not Found — PasteAI{{end}}
+
+{{define "body"}}
+<div class="page">
+  <div class="content-wrapper">
+    <div class="content-inner error-page">
+      <div class="error-code">404</div>
+      <p class="error-message">{{index . "Message"}}</p>
+      <a href="/" class="error-back">← Back to all documents</a>
+    </div>
+  </div>
+</div>
+{{end}}

@@ -1,0 +1,12 @@
+services:
+  pasteai:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      # Before first run: mkdir -p ~/.pasteai
+      # Documents stored at ~/.pasteai/documents/ and DB at ~/.pasteai/documents.db
+      - ${HOME}/.pasteai:/data
+    # Override BASE_URL when running behind a reverse proxy, e.g.:
+    #   command: ["serve", "--addr", ":8080", "--db", "/data/documents.db", "--base-url", "https://pasteai.io"]
+    restart: unless-stopped

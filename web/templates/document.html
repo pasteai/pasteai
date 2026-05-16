@@ -1,0 +1,72 @@
+{{template "base.html" .}}
+
+{{define "extra-head"}}<style>{{.ChromaCSS}}</style>{{end}}
+
+{{define "title"}}{{.Document.Title}} — PasteAI{{end}}
+
+{{define "body"}}
+<div class="page">
+  <div class="content-wrapper">
+    <div class="content-inner">
+      <header class="doc-header">
+        <h1>{{.Document.Title}}</h1>
+        <div class="doc-meta">
+          {{if .Document.Author}}by {{.Document.Author}} &middot; {{end}}{{.Document.CreatedAt.Format "January 2, 2006 at 15:04 UTC"}}
+        </div>
+      </header>
+      <article class="markdown-body">
+        {{.RenderedHTML}}
+      </article>
+      <footer class="doc-footer">
+        Published with <a href="https://github.com/pasteai/pasteai" target="_blank" rel="noopener">PasteAI</a>
+        <button class="delete-btn" onclick="deleteDoc('{{.Document.ID}}')">Delete</button>
+      </footer>
+    </div>
+  </div>
+
+  {{if .Headings}}
+  <aside class="toc-panel">
+    <div class="toc-sticky">
+      <p class="toc-title">Contents</p>
+      <ul class="toc-list">
+        {{range .Headings}}
+        <li class="toc-item toc-h{{.Level}}">
+          <a href="#{{.ID}}">{{.Text}}</a>
+        </li>
+        {{end}}
+      </ul>
+    </div>
+  </aside>
+  {{end}}
+</div>
+
+<script>
+  function deleteDoc(id) {
+    if (!confirm('Delete this document? This cannot be undone.')) return;
+    fetch('/api/documents/' + id, { method: 'DELETE' })
+      .then(function(r) {
+        if (r.status === 204) { window.location.href = '/'; }
+        else { alert('Delete failed — try again.'); }
+      })
+      .catch(function() { alert('Delete failed — try again.'); });
+  }
+
+  document.querySelectorAll('.markdown-body pre.chroma').forEach(function(pre) {
+    var btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', function() {
+      var code = pre.querySelector('code');
+      var text = code ? code.innerText : pre.innerText;
+      navigator.clipboard.writeText(text).then(function() {
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+      }).catch(function() {
+        btn.textContent = 'Error';
+        setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+      });
+    });
+    pre.appendChild(btn);
+  });
+</script>
+{{end}}

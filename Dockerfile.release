@@ -1,0 +1,12 @@
+# Used by goreleaser to package a pre-built binary.
+# The binary is injected by goreleaser — do not RUN go build here.
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates && \
+    adduser -D -u 10001 pasteai && \
+    mkdir /data && chown pasteai:pasteai /data
+COPY pasteai /pasteai
+VOLUME ["/data"]
+EXPOSE 8080
+USER pasteai
+ENTRYPOINT ["/pasteai"]
+CMD ["serve", "--addr", ":8080", "--db", "/data/documents.db"]
