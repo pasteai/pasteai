@@ -117,8 +117,11 @@ docker_manifests:
 changelog:
   disable: true  # Release Please manages the changelog
 
-# MCP Registry — publishes server.json to modelcontextprotocol/registry
+# MCP Registry — disabled until goreleaser fixes OIDC audience bug
+# Expected: https://registry.modelcontextprotocol.io, got: mcp-registry
+# Re-enable when fixed: https://github.com/orgs/goreleaser/discussions/6251
 mcp:
+  disable: true
   name: io.github.pasteai/pasteai
   title: "PasteAI"
   description: "Publish markdown documents from AI — Claude calls publish_document and gets back a shareable URL."
