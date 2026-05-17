@@ -117,30 +117,6 @@ docker_manifests:
 changelog:
   disable: true  # Release Please manages the changelog
 
-# MCP Registry — disabled until goreleaser fixes OIDC audience bug
-# Expected: https://registry.modelcontextprotocol.io, got: mcp-registry
-# Re-enable when fixed: https://github.com/orgs/goreleaser/discussions/6251
-mcp:
-  disable: true
-  name: io.github.pasteai/pasteai
-  title: "PasteAI"
-  description: "Publish markdown documents from AI — Claude calls publish_document and gets back a shareable URL."
-  homepage: "https://github.com/pasteai/pasteai"
-
-  auth:
-    type: github-oidc
-    token: "{{ .Env.GITHUB_TOKEN }}"
-
-  repository:
-    url: "https://github.com/pasteai/pasteai"
-    source: github
-
-  packages:
-    - registry_type: go
-      identifier: "github.com/pasteai/pasteai/cmd/pasteai"
-      transport:
-        type: stdio
-    - registry_type: oci
-      identifier: "ghcr.io/pasteai/pasteai:{{ .Version }}"
-      transport:
-        type: stdio
+# MCP Registry config removed — goreleaser OIDC audience bug blocks publishing
+# (expected https://registry.modelcontextprotocol.io, got mcp-registry)
+# Re-add when fixed: https://github.com/orgs/goreleaser/discussions/6251
