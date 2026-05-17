@@ -31,8 +31,12 @@ type Server struct {
 func New() *Server {
 	rawURL := os.Getenv("PASTEAI_URL")
 	embedded := rawURL == ""
+	embeddedPort := os.Getenv("PASTEAI_EMBEDDED_PORT")
+	if embeddedPort == "" {
+		embeddedPort = "18080"
+	}
 	if embedded {
-		rawURL = "http://localhost:8080"
+		rawURL = "http://localhost:" + embeddedPort
 	}
 
 	u, err := url.Parse(rawURL)
@@ -45,7 +49,7 @@ func New() *Server {
 	baseURL := u.String()
 
 	if embedded && !isResponding(baseURL) {
-		if err := startEmbedded(); err != nil {
+		if err := startEmbedded(embeddedPort); err != nil {
 			fmt.Fprintf(os.Stderr, "[pasteai-mcp] failed to start embedded server: %v\n", err)
 			os.Exit(1)
 		}
@@ -79,10 +83,11 @@ func isResponding(baseURL string) bool {
 	return resp.StatusCode < 500
 }
 
-// startEmbedded opens the db, binds port 8080, and starts the HTTP server in a
-// goroutine. Binding synchronously means a port conflict is caught immediately
-// rather than discovered later when forwarding tool calls to the wrong service.
-func startEmbedded() error {
+// startEmbedded opens the db, binds the given port, and starts the HTTP server
+// in a goroutine. Binding synchronously means a port conflict is caught
+// immediately rather than discovered later when forwarding tool calls to the
+// wrong service.
+func startEmbedded(port string) error {
 	dbPath := embeddedDBPath()
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
@@ -91,12 +96,13 @@ func startEmbedded() error {
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
-	ln, err := net.Listen("tcp", ":8080")
+	addr := ":" + port
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("port 8080 is already in use by another process (not pasteai): %w", err)
+		return fmt.Errorf("port %s is already in use by another process (not pasteai): %w", port, err)
 	}
 	httpSrv := api.NewServer(s, api.Config{
-		Addr:   ":8080",
+		Addr:   addr,
 		Logger: log.New(os.Stderr, "[pasteai] ", log.LstdFlags),
 	})
 	go func() {

@@ -189,4 +189,4 @@ Tell the user:
 > **Restart Claude Code** to activate the `publish_document` and `list_documents` tools.
 >
 > Documents are stored as plain markdown at `~/.pasteai/documents/{id}.md` — readable any time, no server needed.
-> The web UI is at http://localhost:8080 (starts automatically on first use in embedded mode).
+> The web UI is at http://localhost:18080 (starts automatically on first use in embedded mode).
