@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.0](https://github.com/pasteai/pasteai/compare/v0.0.3...v0.1.0) (2026-05-17)
+## [0.0.4](https://github.com/pasteai/pasteai/compare/v0.0.3...v0.0.4) (2026-05-17)
 
 
 ### Features
