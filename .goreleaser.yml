@@ -73,7 +73,7 @@ nfpms:
     package_name: pasteai
     vendor: PasteAI
     homepage: https://github.com/pasteai/pasteai
-    maintainer: PasteAI <hello@pasteai.ai>
+    maintainer: Tim Little <tim@waux.io>
     description: AI publishes markdown documents via MCP. You read them in a clean, themed web UI.
     license: MIT
     formats:

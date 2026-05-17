@@ -118,8 +118,16 @@ func setupDockerEnv() (cleanup func(), err error) {
 }
 
 func findRepoRoot() string {
+	// go env GOMOD returns the absolute path to go.mod regardless of wd.
+	out, err := exec.Command("go", "env", "GOMOD").Output()
+	if err == nil {
+		gomod := strings.TrimSpace(string(out))
+		if gomod != "" && gomod != os.DevNull {
+			return filepath.Dir(gomod)
+		}
+	}
 	wd, _ := os.Getwd()
-	return filepath.Dir(wd) // test/ is one level below repo root
+	return filepath.Dir(wd)
 }
 
 func buildLinuxBinary(repoRoot string) (string, error) {

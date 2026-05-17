@@ -1,5 +1,5 @@
-# Binary
-pasteai
+# Binary (root-level only — does not match cmd/pasteai/)
+/pasteai
 
 # Database files
 *.db

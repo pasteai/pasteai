@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -29,7 +30,8 @@ func TestMain(m *testing.M) {
 	tmp.Close()
 	binPath := tmp.Name()
 
-	cmd := exec.Command("go", "build", "-o", binPath, "github.com/pasteai/pasteai/cmd/pasteai")
+	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/pasteai")
+	cmd.Dir = findRepoRoot()
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -101,4 +103,16 @@ func waitReady(baseURL string) bool {
 		time.Sleep(50 * time.Millisecond)
 	}
 	return false
+}
+
+func findRepoRoot() string {
+	out, err := exec.Command("go", "env", "GOMOD").Output()
+	if err == nil {
+		gomod := strings.TrimSpace(string(out))
+		if gomod != "" && gomod != os.DevNull {
+			return filepath.Dir(gomod)
+		}
+	}
+	wd, _ := os.Getwd()
+	return filepath.Dir(wd)
 }
