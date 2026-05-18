@@ -108,7 +108,6 @@ localhost:8080/d/a3b4c5</span></code></pre>
   <section class="docs-section">
     <div class="section-header">
       <h2 class="section-title">Recent <span class="accent">Documents</span></h2>
-      <span class="doc-count">{{len .Documents}} published</span>
     </div>
     <ul class="doc-list">
       {{range .Documents}}
@@ -122,6 +121,11 @@ localhost:8080/d/a3b4c5</span></code></pre>
       </li>
       {{end}}
     </ul>
+    {{if .NextToken}}
+    <div class="load-more">
+      <a href="/?token={{.NextToken}}" class="load-more-btn">Load more</a>
+    </div>
+    {{end}}
   </section>
   {{else}}
   <div class="empty-state">

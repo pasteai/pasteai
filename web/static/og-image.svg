@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#070d14"/>
+      <stop offset="100%" stop-color="#0e1a2b"/>
+    </linearGradient>
+    <linearGradient id="title" x1="0" y1="0" x2="600" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ddeeff"/>
+      <stop offset="50%" stop-color="#5aacf7"/>
+      <stop offset="100%" stop-color="#38d9f5"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <!-- subtle grid -->
+  <g stroke="#1a2d45" stroke-width="1" opacity="0.4">
+    <line x1="0" y1="126" x2="1200" y2="126"/>
+    <line x1="0" y1="252" x2="1200" y2="252"/>
+    <line x1="0" y1="378" x2="1200" y2="378"/>
+    <line x1="0" y1="504" x2="1200" y2="504"/>
+    <line x1="240" y1="0" x2="240" y2="630"/>
+    <line x1="480" y1="0" x2="480" y2="630"/>
+    <line x1="720" y1="0" x2="720" y2="630"/>
+    <line x1="960" y1="0" x2="960" y2="630"/>
+  </g>
+  <!-- glow -->
+  <ellipse cx="600" cy="315" rx="420" ry="220" fill="#1a3a5c" opacity="0.25"/>
+  <!-- title -->
+  <text x="100" y="310" font-family="system-ui, -apple-system, sans-serif" font-size="104" font-weight="700" letter-spacing="-4" fill="url(#title)">PasteAI</text>
+  <!-- tagline -->
+  <text x="100" y="382" font-family="system-ui, -apple-system, sans-serif" font-size="28" fill="#8ba8c8" letter-spacing="-0.5">Your AI publishes. Your team reads.</text>
+  <!-- accent bar -->
+  <rect x="100" y="422" width="56" height="3" rx="2" fill="#5aacf7"/>
+  <!-- pill -->
+  <rect x="100" y="460" width="380" height="44" rx="10" fill="#0e1f33" stroke="#1e3a5a" stroke-width="1"/>
+  <text x="122" y="488" font-family="ui-monospace, monospace" font-size="18" fill="#5aacf7">publish_document</text>
+  <text x="318" y="488" font-family="ui-monospace, monospace" font-size="18" fill="#4a7a9b"> → </text>
+  <text x="358" y="488" font-family="ui-monospace, monospace" font-size="18" fill="#38d9f5">/d/xk9m2p</text>
+</svg>

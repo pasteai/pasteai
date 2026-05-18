@@ -293,6 +293,72 @@ func TestPersistence(t *testing.T) {
 	}
 }
 
+func TestUpdate(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	doc, _ := s.Create(ctx, store.Document{Title: "Original", Content: "old content"})
+
+	updated, err := s.Update(ctx, doc.ID, "New Title", "new content")
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Title != "New Title" {
+		t.Errorf("title = %q, want %q", updated.Title, "New Title")
+	}
+	if updated.Content != "new content" {
+		t.Errorf("content = %q, want %q", updated.Content, "new content")
+	}
+
+	// Verify Get reflects the update.
+	got, _ := s.Get(ctx, doc.ID)
+	if got.Title != "New Title" || got.Content != "new content" {
+		t.Errorf("Get after Update: title=%q content=%q", got.Title, got.Content)
+	}
+}
+
+func TestUpdateTitleOnly(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	doc, _ := s.Create(ctx, store.Document{Title: "Original", Content: "keep this"})
+	updated, err := s.Update(ctx, doc.ID, "New Title", "")
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Title != "New Title" {
+		t.Errorf("title = %q, want New Title", updated.Title)
+	}
+	if updated.Content != "keep this" {
+		t.Errorf("content should be unchanged, got %q", updated.Content)
+	}
+}
+
+func TestUpdateContentOnly(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	doc, _ := s.Create(ctx, store.Document{Title: "Keep Title", Content: "old"})
+	updated, err := s.Update(ctx, doc.ID, "", "new content")
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Title != "Keep Title" {
+		t.Errorf("title should be unchanged, got %q", updated.Title)
+	}
+	if updated.Content != "new content" {
+		t.Errorf("content = %q, want new content", updated.Content)
+	}
+}
+
+func TestUpdateNotFound(t *testing.T) {
+	s := newTestStore(t)
+	_, err := s.Update(context.Background(), "does-not-exist", "title", "content")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Update missing doc: err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

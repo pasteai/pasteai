@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -163,6 +164,30 @@ func (s *Server) Run() error {
 	)
 	srv.AddTool(listTool, s.handleList)
 
+	getTool := mcpgo.NewTool("get_document",
+		mcpgo.WithDescription("Retrieve a PasteAI document by ID, including its full markdown content"),
+		mcpgo.WithString("id",
+			mcpgo.Required(),
+			mcpgo.Description("The document ID"),
+		),
+	)
+	srv.AddTool(getTool, s.handleGet)
+
+	updateTool := mcpgo.NewTool("update_document",
+		mcpgo.WithDescription("Update the title or content of an existing PasteAI document. Provide at least one of title or content."),
+		mcpgo.WithString("id",
+			mcpgo.Required(),
+			mcpgo.Description("The document ID to update"),
+		),
+		mcpgo.WithString("title",
+			mcpgo.Description("New title (omit to keep existing)"),
+		),
+		mcpgo.WithString("content",
+			mcpgo.Description("New markdown content (omit to keep existing)"),
+		),
+	)
+	srv.AddTool(updateTool, s.handleUpdate)
+
 	return mcpserver.ServeStdio(srv)
 }
 
@@ -263,9 +288,117 @@ func (s *Server) handleList(_ context.Context, _ mcpgo.CallToolRequest) (*mcpgo.
 	}
 	docs := listResp.Documents
 
-	out, err := json.MarshalIndent(docs, "", "  ")
-	if err != nil {
-		return mcpgo.NewToolResultError("failed to format response"), nil
+	if len(docs) == 0 {
+		return mcpgo.NewToolResultText("No documents found."), nil
 	}
-	return mcpgo.NewToolResultText(string(out)), nil
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d document(s):\n\n", len(docs))
+	for _, d := range docs {
+		fmt.Fprintf(&sb, "- [%s](%s) (ID: %s", d.Title, d.URL, d.ID)
+		if d.Author != "" {
+			fmt.Fprintf(&sb, ", by %s", d.Author)
+		}
+		fmt.Fprintf(&sb, ")\n")
+	}
+	return mcpgo.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleGet(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	id := req.GetString("id", "")
+	if id == "" {
+		return mcpgo.NewToolResultError("id is required"), nil
+	}
+
+	httpReq, err := http.NewRequest(http.MethodGet, s.baseURL+"/api/documents/"+id, nil)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to build request: %v", err)), nil
+	}
+	if s.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
+
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to reach PasteAI server: %v", err)), nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return mcpgo.NewToolResultError(fmt.Sprintf("document %q not found", id)), nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return mcpgo.NewToolResultError(fmt.Sprintf("server returned %d", resp.StatusCode)), nil
+	}
+
+	var result struct {
+		ID         string `json:"id"`
+		Title      string `json:"title"`
+		Content    string `json:"content"`
+		Author     string `json:"author"`
+		Visibility string `json:"visibility"`
+		CreatedAt  string `json:"created_at"`
+		URL        string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return mcpgo.NewToolResultError("failed to parse server response"), nil
+	}
+
+	return mcpgo.NewToolResultText(fmt.Sprintf(
+		"Title: %s\nID: %s\nURL: %s\nVisibility: %s\nCreated: %s\n\n---\n\n%s",
+		result.Title, result.ID, result.URL, result.Visibility, result.CreatedAt, result.Content,
+	)), nil
+}
+
+func (s *Server) handleUpdate(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	id := req.GetString("id", "")
+	title := req.GetString("title", "")
+	content := req.GetString("content", "")
+
+	if id == "" {
+		return mcpgo.NewToolResultError("id is required"), nil
+	}
+	if title == "" && content == "" {
+		return mcpgo.NewToolResultError("at least one of title or content is required"), nil
+	}
+
+	payload := map[string]string{"title": title, "content": content}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to serialise request: %v", err)), nil
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPut, s.baseURL+"/api/documents/"+id, bytes.NewReader(body))
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to build request: %v", err)), nil
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if s.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
+
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to reach PasteAI server: %v", err)), nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return mcpgo.NewToolResultError(fmt.Sprintf("document %q not found", id)), nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		var errBody struct{ Error string `json:"error"` }
+		if json.NewDecoder(resp.Body).Decode(&errBody) == nil && errBody.Error != "" {
+			return mcpgo.NewToolResultError(fmt.Sprintf("server error (%d): %s", resp.StatusCode, errBody.Error)), nil
+		}
+		return mcpgo.NewToolResultError(fmt.Sprintf("server returned %d", resp.StatusCode)), nil
+	}
+
+	var result struct {
+		URL string `json:"url"`
+		ID  string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return mcpgo.NewToolResultError("failed to parse server response"), nil
+	}
+	return mcpgo.NewToolResultText(fmt.Sprintf("Document updated.\nURL: %s\nID: %s", result.URL, result.ID)), nil
 }

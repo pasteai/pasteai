@@ -83,10 +83,12 @@ func (s *Server) registerRoutes() {
 
 	s.mux.HandleFunc("GET /{$}", s.handleHome)
 	s.mux.HandleFunc("GET /d/{id}", s.handleViewDocument)
+	s.mux.HandleFunc("GET /d/{id}/raw", s.handleViewRaw)
 
 	s.mux.HandleFunc("POST /api/documents", s.handleCreateDocument)
 	s.mux.HandleFunc("GET /api/documents", s.handleListDocuments)
 	s.mux.HandleFunc("GET /api/documents/{id}", s.handleGetDocument)
+	s.mux.HandleFunc("PUT /api/documents/{id}", s.handleUpdateDocument)
 	s.mux.HandleFunc("DELETE /api/documents/{id}", s.handleDeleteDocument)
 }
 
@@ -94,18 +96,39 @@ func (s *Server) registerRoutes() {
 
 type homeData struct {
 	Documents []store.Document
+	NextToken string
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	result, err := s.store.List(r.Context(), store.ListOptions{
-		OwnerID: ownerFromCtx(r.Context()),
-		Limit:   50,
+		OwnerID:   ownerFromCtx(r.Context()),
+		Limit:     20,
+		NextToken: r.URL.Query().Get("token"),
 	})
 	if err != nil {
 		s.serverError(w, err)
 		return
 	}
-	s.renderWith(w, s.homeTmpl, homeData{Documents: result.Documents})
+	s.renderWith(w, s.homeTmpl, homeData{
+		Documents: result.Documents,
+		NextToken: result.NextToken,
+	})
+}
+
+func (s *Server) handleViewRaw(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	doc, err := s.store.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		s.serverError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s.md"`, id))
+	fmt.Fprint(w, doc.Content)
 }
 
 type documentData struct {
@@ -116,6 +139,7 @@ type documentData struct {
 	Description  string
 	PageURL      string
 	OGImageURL   string
+	RawURL       string
 	ShowDelete   bool
 }
 
@@ -145,6 +169,7 @@ func (s *Server) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 		Description:  docDescription(doc.Content),
 		PageURL:      s.baseURL + "/d/" + doc.ID,
 		OGImageURL:   s.baseURL + "/static/og-image.svg",
+		RawURL:       "/d/" + doc.ID + "/raw",
 		ShowDelete:   s.isAuthenticated(r),
 	})
 }
@@ -173,6 +198,37 @@ func docDescription(content string) string {
 }
 
 // ── API handlers ───────────────────────────────────────────
+
+type updateRequest struct {
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+
+func (s *Server) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req updateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if req.Title == "" && req.Content == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title or content required"})
+		return
+	}
+	doc, err := s.store.Update(r.Context(), id, req.Title, req.Content)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		s.serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, documentDetailResponse{
+		documentResponse: s.toResponse(r, *doc),
+		Content:          doc.Content,
+	})
+}
 
 type createRequest struct {
 	Title      string `json:"title"`

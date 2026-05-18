@@ -342,7 +342,7 @@ a:hover {
   -webkit-backdrop-filter: blur(12px);
   color: var(--color-text-secondary);
   font-family: var(--font-body);
-  font-size: 0.83rem;
+  font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(.4,0,.2,1);
@@ -460,7 +460,7 @@ a:hover {
 }
 
 .toc-title {
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -542,7 +542,7 @@ a:hover {
 
 .hero-tagline {
   font-family: var(--font-display);
-  font-size: 1.05rem;
+  font-size: 1rem;
   font-weight: 500;
   color: var(--color-primary);
   letter-spacing: 0.14em;
@@ -622,7 +622,7 @@ a:hover {
 
 .step-num {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   color: var(--color-primary);
@@ -659,7 +659,7 @@ a:hover {
   border: 1px solid var(--color-border);
   background: var(--color-surface-card-strong);
   overflow: hidden;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 .code-header {
@@ -683,7 +683,7 @@ a:hover {
 .code-fname {
   margin-left: auto;
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--color-text-muted);
 }
 
@@ -754,6 +754,29 @@ a:hover {
 .doc-author {
   color: var(--color-primary);
   font-weight: 500;
+}
+
+/* ── Load more ───────────────────────────────────────────── */
+
+.load-more {
+  text-align: center;
+  padding: 1.25rem 0 0.5rem;
+}
+.load-more-btn {
+  display: inline-block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0.4rem 1.25rem;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.load-more-btn:hover {
+  color: var(--color-primary);
+  border-color: var(--color-border-accent);
+  background: var(--color-surface-card);
+  text-decoration: none;
 }
 
 /* ── Empty State ─────────────────────────────────────────── */
@@ -979,7 +1002,7 @@ a:hover {
   top: 0.6rem;
   right: 0.6rem;
   padding: 0.2rem 0.55rem;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-family: var(--font-mono);
   background: var(--color-surface-card);
   color: var(--color-text-muted);
@@ -1012,7 +1035,7 @@ a:hover {
   border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
   border-radius: 4px;
   color: var(--color-danger);
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   font-family: inherit;
   cursor: pointer;
   padding: 3px 10px;
@@ -1095,7 +1118,7 @@ a:hover {
   margin: 0 0 0.5rem;
 }
 .modal-body {
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   color: var(--color-text-muted);
   margin: 0 0 1.5rem;
 }
@@ -1137,7 +1160,7 @@ a:hover {
   margin-bottom: 2rem;
 }
 .how-it-works-summary {
-  font-size: 0.82rem;
+  font-size: 0.875rem;
   font-weight: 500;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -1180,7 +1203,7 @@ a:hover {
   align-items: center;
   gap: 0.35rem;
   flex-shrink: 0;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 500;
   color: var(--color-text-muted);
   background: transparent;
@@ -1259,7 +1282,7 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--color-text-muted);
   margin-bottom: 1.25rem;
 }

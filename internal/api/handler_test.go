@@ -593,6 +593,98 @@ func TestHomePageFullHeroWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestRawDocument(t *testing.T) {
+	ts, s := newTestServer(t)
+	doc, _ := s.Create(context.Background(), store.Document{
+		Title:   "Raw Test",
+		Content: "# Hello\n\nworld",
+	})
+
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s/raw", ts.URL, doc.ID))
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain", ct)
+	}
+	body := readBody(t, resp)
+	if body != "# Hello\n\nworld" {
+		t.Errorf("raw body = %q, want original markdown", body)
+	}
+}
+
+func TestRawDocumentNotFound(t *testing.T) {
+	ts, _ := newTestServer(t)
+	resp := mustGet(t, ts.URL+"/d/does-not-exist/raw")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestUpdateDocument(t *testing.T) {
+	ts, s := newTestServer(t)
+	doc, _ := s.Create(context.Background(), store.Document{
+		Title:   "Original",
+		Content: "old content",
+	})
+
+	body := `{"title":"Updated Title","content":"new content"}`
+	req, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	var result map[string]any
+	decodeJSON(t, resp.Body, &result)
+	if result["title"] != "Updated Title" {
+		t.Errorf("title = %v, want Updated Title", result["title"])
+	}
+	if result["content"] != "new content" {
+		t.Errorf("content = %v, want new content", result["content"])
+	}
+}
+
+func TestUpdateDocumentNotFound(t *testing.T) {
+	ts, _ := newTestServer(t)
+	body := `{"title":"x","content":"y"}`
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/documents/does-not-exist", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestUpdateDocumentEmptyBody(t *testing.T) {
+	ts, s := newTestServer(t)
+	doc, _ := s.Create(context.Background(), store.Document{Title: "T", Content: "c"})
+
+	req, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
 func TestStaticFileServed(t *testing.T) {
 	ts, _ := newTestServer(t)
 	resp := mustGet(t, ts.URL+"/static/style.css")

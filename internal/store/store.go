@@ -49,6 +49,8 @@ type Store interface {
 	Create(ctx context.Context, doc Document) (*Document, error)
 	List(ctx context.Context, opts ListOptions) (*ListResult, error)
 	Get(ctx context.Context, id string) (*Document, error)
+	// Update overwrites non-empty fields. Empty title or content means "keep existing".
+	Update(ctx context.Context, id, title, content string) (*Document, error)
 	Delete(ctx context.Context, id string) error
 	Close() error
 }

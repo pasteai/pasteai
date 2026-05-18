@@ -54,7 +54,7 @@
         {{.RenderedHTML}}
       </article>
       <footer class="doc-footer">
-        <span>Published with <a href="https://github.com/pasteai/pasteai" target="_blank" rel="noopener">PasteAI</a></span>
+        <span>Published with <a href="https://github.com/pasteai/pasteai" target="_blank" rel="noopener">PasteAI</a> &middot; <a href="{{.RawURL}}">View source</a></span>
         {{if .ShowDelete}}<button class="delete-btn" onclick="deleteDoc('{{.Document.ID}}')">Delete</button>{{end}}
       </footer>
     </div>

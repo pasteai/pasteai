@@ -142,14 +142,14 @@ func (s *BoltStore) List(_ context.Context, opts ListOptions) (*ListResult, erro
 			if err := json.Unmarshal(data, &doc); err != nil {
 				continue
 			}
+			visible := false
 			if opts.OwnerID != "" {
-				if doc.OwnerID == opts.OwnerID {
-					docs = append(docs, doc)
-				}
+				visible = doc.OwnerID == opts.OwnerID
 			} else {
-				if doc.Visibility == VisibilityPublic {
-					docs = append(docs, doc)
-				}
+				visible = doc.Visibility == VisibilityPublic
+			}
+			if visible {
+				docs = append(docs, doc)
 			}
 		}
 		return nil
@@ -189,6 +189,49 @@ func (s *BoltStore) Get(_ context.Context, id string) (*Document, error) {
 		return nil, fmt.Errorf("read content file: %w", err)
 	}
 	doc.Content = string(content)
+	return &doc, nil
+}
+
+func (s *BoltStore) Update(_ context.Context, id, title, content string) (*Document, error) {
+	var doc Document
+	if err := s.db.View(func(tx *bolt.Tx) error {
+		data := tx.Bucket(bucketDocs).Get([]byte(id))
+		if data == nil {
+			return ErrNotFound
+		}
+		return json.Unmarshal(data, &doc)
+	}); err != nil {
+		return nil, err
+	}
+
+	if title != "" {
+		doc.Title = title
+	}
+	if content != "" {
+		if err := os.WriteFile(s.contentPath(id), []byte(content), 0600); err != nil {
+			return nil, fmt.Errorf("write content file: %w", err)
+		}
+		doc.Content = content
+	}
+
+	meta := doc
+	meta.Content = ""
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketDocs).Put([]byte(id), data)
+	}); err != nil {
+		return nil, err
+	}
+
+	if content == "" {
+		raw, err := os.ReadFile(s.contentPath(id))
+		if err == nil {
+			doc.Content = string(raw)
+		}
+	}
 	return &doc, nil
 }
 
