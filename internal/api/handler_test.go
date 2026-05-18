@@ -45,105 +45,87 @@ func readBody(t *testing.T, resp *http.Response) string {
 	return buf.String()
 }
 
-
 // ── /api/documents ─────────────────────────────────────────
 
 func TestCreateDocument(t *testing.T) {
 	ts, _ := newTestServer(t)
-
-	body := `{"title":"My Report","content":"# Hello","author":"Claude"}`
-	resp := mustPost(t, ts.URL+"/api/documents", "application/json", body)
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		t.Errorf("status = %d, want 201", resp.StatusCode)
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{
+			name:       "valid",
+			body:       `{"title":"My Report","content":"# Hello","author":"Claude"}`,
+			wantStatus: http.StatusCreated,
+		},
+		{name: "missing title", body: `{"content":"body"}`, wantStatus: http.StatusBadRequest},
+		{name: "missing content", body: `{"title":"title"}`, wantStatus: http.StatusBadRequest},
+		{name: "invalid JSON", body: `not-json`, wantStatus: http.StatusBadRequest},
 	}
-
-	var result map[string]any
-	decodeJSON(t, resp.Body, &result)
-
-	if result["id"] == "" {
-		t.Error("expected non-empty id")
-	}
-	if result["url"] == nil {
-		t.Error("expected url in response")
-	}
-	if result["content"] == nil {
-		t.Error("expected content in response")
-	}
-	if result["title"] != "My Report" {
-		t.Errorf("title = %v, want My Report", result["title"])
-	}
-}
-
-func TestCreateDocumentMissingTitle(t *testing.T) {
-	ts, _ := newTestServer(t)
-	resp := mustPost(t, ts.URL+"/api/documents", "application/json", `{"content":"body"}`)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestCreateDocumentMissingContent(t *testing.T) {
-	ts, _ := newTestServer(t)
-	resp := mustPost(t, ts.URL+"/api/documents", "application/json", `{"title":"title"}`)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
-	}
-}
-
-func TestCreateDocumentInvalidJSON(t *testing.T) {
-	ts, _ := newTestServer(t)
-	resp := mustPost(t, ts.URL+"/api/documents", "application/json", `not-json`)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := mustPost(t, ts.URL+"/api/documents", "application/json", tt.body)
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.wantStatus == http.StatusCreated {
+				var result map[string]any
+				decodeJSON(t, resp.Body, &result)
+				if result["id"] == "" {
+					t.Error("expected non-empty id")
+				}
+				if result["url"] == nil {
+					t.Error("expected url in response")
+				}
+				if result["content"] == nil {
+					t.Error("expected content in response")
+				}
+				if result["title"] != "My Report" {
+					t.Errorf("title = %v, want My Report", result["title"])
+				}
+			}
+		})
 	}
 }
 
 func TestListDocuments(t *testing.T) {
-	ts, s := newTestServer(t)
-	ctx := context.Background()
-
-	s.Create(ctx, store.Document{Title: "Doc A", Content: "a", Visibility: store.VisibilityPublic})
-	s.Create(ctx, store.Document{Title: "Doc B", Content: "b", Visibility: store.VisibilityPublic})
-
-	resp := mustGet(t, ts.URL+"/api/documents")
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
+	tests := []struct {
+		name          string
+		seedTitles    []string
+		wantCount     int
+		wantNoContent bool
+	}{
+		{name: "empty", seedTitles: nil, wantCount: 0},
+		{name: "with documents", seedTitles: []string{"Doc A", "Doc B"}, wantCount: 2, wantNoContent: true},
 	}
-
-	var listResp struct {
-		Documents []map[string]any `json:"documents"`
-		NextToken string           `json:"next_token"`
-	}
-	decodeJSON(t, resp.Body, &listResp)
-
-	if len(listResp.Documents) != 2 {
-		t.Fatalf("expected 2 docs, got %d", len(listResp.Documents))
-	}
-	// content field should NOT be present in list response
-	if _, ok := listResp.Documents[0]["content"]; ok {
-		t.Error("list response should not include content field")
-	}
-}
-
-func TestListDocumentsEmpty(t *testing.T) {
-	ts, _ := newTestServer(t)
-	resp := mustGet(t, ts.URL+"/api/documents")
-	defer resp.Body.Close()
-
-	var listResp struct {
-		Documents []any  `json:"documents"`
-		NextToken string `json:"next_token"`
-	}
-	decodeJSON(t, resp.Body, &listResp)
-	if len(listResp.Documents) != 0 {
-		t.Errorf("expected empty list, got %d items", len(listResp.Documents))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, s := newTestServer(t)
+			ctx := context.Background()
+			for _, title := range tt.seedTitles {
+				s.Create(ctx, store.Document{Title: title, Content: "c", Visibility: store.VisibilityPublic})
+			}
+			resp := mustGet(t, ts.URL+"/api/documents")
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("status = %d, want 200", resp.StatusCode)
+			}
+			var listResp struct {
+				Documents []map[string]any `json:"documents"`
+				NextToken string           `json:"next_token"`
+			}
+			decodeJSON(t, resp.Body, &listResp)
+			if len(listResp.Documents) != tt.wantCount {
+				t.Errorf("got %d documents, want %d", len(listResp.Documents), tt.wantCount)
+			}
+			if tt.wantNoContent && len(listResp.Documents) > 0 {
+				if _, ok := listResp.Documents[0]["content"]; ok {
+					t.Error("list response must not include content field")
+				}
+			}
+		})
 	}
 }
 
@@ -151,74 +133,190 @@ func TestGetDocument(t *testing.T) {
 	ts, s := newTestServer(t)
 	doc, _ := s.Create(context.Background(), store.Document{Title: "Test", Content: "# body"})
 
-	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID))
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
+	tests := []struct {
+		name        string
+		id          string
+		wantStatus  int
+		wantContent string
+	}{
+		{name: "found", id: doc.ID, wantStatus: http.StatusOK, wantContent: "# body"},
+		{name: "not found", id: "does-not-exist", wantStatus: http.StatusNotFound},
 	}
-
-	var result map[string]any
-	decodeJSON(t, resp.Body, &result)
-	if result["content"] != "# body" {
-		t.Errorf("content = %v, want '# body'", result["content"])
-	}
-}
-
-func TestGetDocumentNotFound(t *testing.T) {
-	ts, _ := newTestServer(t)
-	resp := mustGet(t, ts.URL+"/api/documents/does-not-exist")
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s", ts.URL, tt.id))
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.wantContent != "" {
+				var result map[string]any
+				decodeJSON(t, resp.Body, &result)
+				if result["content"] != tt.wantContent {
+					t.Errorf("content = %v, want %q", result["content"], tt.wantContent)
+				}
+			}
+		})
 	}
 }
 
 func TestDeleteDocument(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{Title: "To Delete", Content: "bye"})
-
-	req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("DELETE: %v", err)
+	tests := []struct {
+		name        string
+		createFirst bool
+		wantStatus  int
+	}{
+		{name: "success", createFirst: true, wantStatus: http.StatusNoContent},
+		{name: "not found", createFirst: false, wantStatus: http.StatusNotFound},
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Errorf("DELETE status = %d, want 204", resp.StatusCode)
-	}
-
-	// Verify the document is gone from the API
-	get := mustGet(t, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID))
-	defer get.Body.Close()
-	if get.StatusCode != http.StatusNotFound {
-		t.Errorf("GET after DELETE status = %d, want 404", get.StatusCode)
-	}
-
-	// Verify it no longer appears in the list
-	list := mustGet(t, ts.URL+"/api/documents")
-	defer list.Body.Close()
-	var listResp struct {
-		Documents []map[string]any `json:"documents"`
-	}
-	decodeJSON(t, list.Body, &listResp)
-	for _, d := range listResp.Documents {
-		if d["id"] == doc.ID {
-			t.Error("deleted document still appears in list")
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, s := newTestServer(t)
+			var id string
+			if tt.createFirst {
+				doc, _ := s.Create(context.Background(), store.Document{Title: "To Delete", Content: "bye"})
+				id = doc.ID
+			} else {
+				id = "does-not-exist"
+			}
+			req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/documents/%s", ts.URL, id), nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("DELETE: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.createFirst {
+				get := mustGet(t, fmt.Sprintf("%s/api/documents/%s", ts.URL, id))
+				defer get.Body.Close()
+				if get.StatusCode != http.StatusNotFound {
+					t.Errorf("GET after DELETE status = %d, want 404", get.StatusCode)
+				}
+				list := mustGet(t, ts.URL+"/api/documents")
+				defer list.Body.Close()
+				var listResp struct {
+					Documents []map[string]any `json:"documents"`
+				}
+				decodeJSON(t, list.Body, &listResp)
+				for _, d := range listResp.Documents {
+					if d["id"] == id {
+						t.Error("deleted document still appears in list")
+					}
+				}
+			}
+		})
 	}
 }
 
-func TestDeleteDocumentNotFound(t *testing.T) {
-	ts, _ := newTestServer(t)
-	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/documents/does-not-exist", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("DELETE: %v", err)
+func TestUpdateDocument(t *testing.T) {
+	tests := []struct {
+		name        string
+		createFirst bool
+		body        string
+		wantStatus  int
+	}{
+		{
+			name:        "success",
+			createFirst: true,
+			body:        `{"title":"Updated Title","content":"new content"}`,
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "not found",
+			createFirst: false,
+			body:        `{"title":"x","content":"y"}`,
+			wantStatus:  http.StatusNotFound,
+		},
+		{
+			name:        "empty body",
+			createFirst: true,
+			body:        `{}`,
+			wantStatus:  http.StatusBadRequest,
+		},
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("DELETE status = %d, want 404", resp.StatusCode)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, s := newTestServer(t)
+			var id string
+			if tt.createFirst {
+				doc, _ := s.Create(context.Background(), store.Document{Title: "Original", Content: "old"})
+				id = doc.ID
+			} else {
+				id = "does-not-exist"
+			}
+			req, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/documents/%s", ts.URL, id), strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("PUT: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.wantStatus == http.StatusOK {
+				var result map[string]any
+				decodeJSON(t, resp.Body, &result)
+				if result["title"] != "Updated Title" {
+					t.Errorf("title = %v, want Updated Title", result["title"])
+				}
+				if result["content"] != "new content" {
+					t.Errorf("content = %v, want new content", result["content"])
+				}
+			}
+		})
+	}
+}
+
+func TestRawDocument(t *testing.T) {
+	ts, s := newTestServer(t)
+	doc, _ := s.Create(context.Background(), store.Document{
+		Title:   "Raw Test",
+		Content: "# Hello\n\nworld",
+	})
+
+	tests := []struct {
+		name       string
+		id         string
+		wantStatus int
+		wantCT     string
+		wantBody   string
+	}{
+		{
+			name:       "found",
+			id:         doc.ID,
+			wantStatus: http.StatusOK,
+			wantCT:     "text/plain",
+			wantBody:   "# Hello\n\nworld",
+		},
+		{
+			name:       "not found",
+			id:         "does-not-exist",
+			wantStatus: http.StatusNotFound,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := mustGet(t, fmt.Sprintf("%s/d/%s/raw", ts.URL, tt.id))
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.wantCT != "" {
+				ct := resp.Header.Get("Content-Type")
+				if !strings.Contains(ct, tt.wantCT) {
+					t.Errorf("Content-Type = %q, want %s", ct, tt.wantCT)
+				}
+			}
+			if tt.wantBody != "" {
+				body := readBody(t, resp)
+				if body != tt.wantBody {
+					t.Errorf("body = %q, want %q", body, tt.wantBody)
+				}
+			}
+		})
 	}
 }
 
@@ -293,61 +391,139 @@ func TestHomePageEmptyState(t *testing.T) {
 	}
 }
 
-func TestDocumentPageRendersMarkdown(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:      "My Report",
-		Content:    "# Heading One\n\nSome **bold** text.\n\n## Heading Two\n\nMore content.",
-		Author:     "Claude",
-		Visibility: store.VisibilityPublic,
-	})
-
-	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
-	}
-	html := readBody(t, resp)
-
-	checks := []struct {
-		name string
-		want string
+func TestHomePageHero(t *testing.T) {
+	tests := []struct {
+		name    string
+		hasDocs bool
+		wantIn  string
+		wantOut string
 	}{
-		{"page title", "My Report — PasteAI"},
-		{"doc header", `class="doc-header"`},
-		{"document title in header", "My Report"},
-		{"author", "Claude"},
-		{"markdown body", `class="markdown-body"`},
-		{"rendered h1", `<h1 id="heading-one">`},
-		{"rendered bold", "<strong>bold</strong>"},
-		{"rendered h2", `<h2 id="heading-two">`},
-		{"toc panel", `class="toc-panel"`},
-		{"toc heading 1", `toc-h1`},
-		{"toc heading 2", `toc-h2`},
-		{"toc link", `href="#heading-one"`},
+		{name: "compact with documents", hasDocs: true, wantIn: "hero--compact"},
+		{name: "full when empty", hasDocs: false, wantOut: "hero--compact"},
 	}
-
-	for _, c := range checks {
-		if !strings.Contains(html, c.want) {
-			t.Errorf("document page missing %s: %q not found in HTML", c.name, c.want)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, s := newTestServer(t)
+			if tt.hasDocs {
+				s.Create(context.Background(), store.Document{
+					Title:      "Doc",
+					Content:    "content",
+					Visibility: store.VisibilityPublic,
+				})
+			}
+			resp := mustGet(t, ts.URL+"/")
+			defer resp.Body.Close()
+			html := readBody(t, resp)
+			if tt.wantIn != "" && !strings.Contains(html, tt.wantIn) {
+				t.Errorf("want %q in HTML", tt.wantIn)
+			}
+			if tt.wantOut != "" && strings.Contains(html, tt.wantOut) {
+				t.Errorf("want %q absent from HTML", tt.wantOut)
+			}
+		})
 	}
 }
 
-func TestDocumentPageNoTOCWhenNoHeadings(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:   "Plain",
-		Content: "Just a paragraph, no headings.",
-	})
-
-	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
-	defer resp.Body.Close()
-	html := readBody(t, resp)
-
-	if strings.Contains(html, `class="toc-panel"`) {
-		t.Error("toc-panel should not appear when document has no headings")
+func TestDocumentPage(t *testing.T) {
+	tests := []struct {
+		name    string
+		title   string
+		author  string
+		content string
+		wantIn  []string
+		wantOut []string
+	}{
+		{
+			name:    "renders markdown with TOC",
+			title:   "My Report",
+			author:  "Claude",
+			content: "# Heading One\n\nSome **bold** text.\n\n## Heading Two\n\nMore content.",
+			wantIn: []string{
+				"My Report — PasteAI",
+				`class="doc-header"`,
+				"My Report",
+				"Claude",
+				`class="markdown-body"`,
+				`<h1 id="heading-one">`,
+				"<strong>bold</strong>",
+				`<h2 id="heading-two">`,
+				`class="toc-panel"`,
+				`toc-h1`,
+				`toc-h2`,
+				`href="#heading-one"`,
+			},
+		},
+		{
+			name:    "no TOC when no headings",
+			content: "Just a paragraph, no headings.",
+			wantOut: []string{`class="toc-panel"`, `class="toc-mobile"`},
+		},
+		{
+			name:    "OG tags with description",
+			content: "# Heading\n\nFirst paragraph of the document.",
+			wantIn:  []string{`og:title`, `og:type`, `First paragraph of the document`, `twitter:card`, `name="description"`},
+		},
+		{
+			name:    "OG tags omit description for heading-only content",
+			content: "# Just A Heading",
+			wantOut: []string{`name="description"`},
+		},
+		{
+			name:    "breadcrumb",
+			title:   "My Analysis",
+			content: "content",
+			wantIn:  []string{`class="doc-breadcrumb"`, `href="/"`, "My Analysis"},
+		},
+		{
+			name:    "mobile TOC when headings present",
+			content: "# Section One\n\nParagraph.\n\n## Section Two\n\nMore.",
+			wantIn:  []string{`class="toc-mobile"`, `class="toc-mobile-toggle"`},
+		},
+		{
+			name:    "no mobile TOC when no headings",
+			content: "Just prose, no headings.",
+			wantOut: []string{`class="toc-mobile"`},
+		},
+		{
+			name:    "delete modal",
+			content: "content",
+			wantIn:  []string{`id="delete-modal"`, `modal-btn--danger`, `modal-btn--cancel`},
+		},
+		{
+			name:    "syntax highlighting",
+			content: "```go\nfmt.Println(\"hello\")\n```",
+			wantIn:  []string{`<pre class="chroma"`, `class="chroma"`},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, s := newTestServer(t)
+			title := tt.title
+			if title == "" {
+				title = "Test Doc"
+			}
+			doc, _ := s.Create(context.Background(), store.Document{
+				Title:   title,
+				Author:  tt.author,
+				Content: tt.content,
+			})
+			resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("status = %d, want 200", resp.StatusCode)
+			}
+			html := readBody(t, resp)
+			for _, want := range tt.wantIn {
+				if !strings.Contains(html, want) {
+					t.Errorf("want %q in HTML", want)
+				}
+			}
+			for _, notWant := range tt.wantOut {
+				if strings.Contains(html, notWant) {
+					t.Errorf("want %q absent from HTML", notWant)
+				}
+			}
+		})
 	}
 }
 
@@ -360,35 +536,10 @@ func TestDocumentPageNotFound(t *testing.T) {
 	}
 }
 
-func TestDocumentPageSyntaxHighlighting(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:   "Code",
-		Content: "```go\nfmt.Println(\"hello\")\n```",
-	})
-
-	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
-	defer resp.Body.Close()
-	html := readBody(t, resp)
-
-	if !strings.Contains(html, `<pre class="chroma"`) {
-		t.Error("expected Chroma-highlighted <pre class=\"chroma\"> for code block")
-	}
-	if !strings.Contains(html, `class="chroma"`) {
-		t.Error("expected class-based Chroma output")
-	}
-}
-
-// TestDocumentPageCodeBlockThemeCSS is the self-serve regression test for the
-// "code blocks don't change with theme" bug. It asserts two invariants that
-// together guarantee the CSS variable controls the background:
-//
-//  1. The injected <style> block has NO hardcoded background-color on the
-//     PreWrapper rule — if it did, it would fight (and potentially beat) our
-//     CSS variable depending on cascade order.
-//
-//  2. style.css contains `.markdown-body pre.chroma { background: var(--color-surface-card-strong) }`
-//     which is the rule that reads the per-theme CSS variable.
+// TestDocumentPageCodeBlockThemeCSS verifies two invariants that together
+// guarantee CSS variables control code block backgrounds per-theme:
+//  1. The injected <style> block has no hardcoded background-color on PreWrapper.
+//  2. style.css uses var(--color-surface-card-strong) on pre.chroma.
 func TestDocumentPageCodeBlockThemeCSS(t *testing.T) {
 	ts, s := newTestServer(t)
 	doc, _ := s.Create(context.Background(), store.Document{
@@ -396,7 +547,6 @@ func TestDocumentPageCodeBlockThemeCSS(t *testing.T) {
 		Content: "```go\nfmt.Println(\"hello\")\n```",
 	})
 
-	// ── 1. Inspect the injected <style> block ──────────────────
 	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
 	defer resp.Body.Close()
 	html := readBody(t, resp)
@@ -408,280 +558,29 @@ func TestDocumentPageCodeBlockThemeCSS(t *testing.T) {
 	}
 	injectedCSS := html[styleStart : styleEnd+8]
 
-	// No unscoped .bg rule — it would bleed onto arbitrary page elements.
 	if strings.Contains(injectedCSS, "/* Background */") {
 		t.Error("injected Chroma CSS must not contain the unscoped .bg Background rule")
 	}
-
-	// PreWrapper must not hardcode background-color — that fights the CSS variable.
 	for _, line := range strings.Split(injectedCSS, "\n") {
 		if strings.Contains(line, "/* PreWrapper */") && strings.Contains(line, "background-color") {
-			t.Errorf("PreWrapper rule must not set background-color (overrides CSS variable): %s", line)
+			t.Errorf("PreWrapper must not set background-color (overrides CSS variable): %s", line)
 		}
 	}
-
-	// Both theme-group scopes must be present so tokens colour correctly.
 	for _, scope := range []string{`data-theme="light"`, `data-theme="dark"`} {
 		if !strings.Contains(injectedCSS, scope) {
 			t.Errorf("injected CSS missing theme scope: %s", scope)
 		}
 	}
 
-	// ── 2. Confirm style.css has the CSS-variable rule ─────────
 	cssResp := mustGet(t, ts.URL+"/static/style.css")
 	defer cssResp.Body.Close()
 	cssBody := readBody(t, cssResp)
 
 	if !strings.Contains(cssBody, "pre.chroma") {
-		t.Error("style.css must contain a pre.chroma rule to control code block background")
+		t.Error("style.css must contain a pre.chroma rule")
 	}
 	if !strings.Contains(cssBody, "var(--color-surface-card-strong)") {
-		t.Error("style.css pre.chroma rule must use var(--color-surface-card-strong) so background tracks the active theme")
-	}
-}
-
-func TestDocumentPageOGTags(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:   "Report Title",
-		Content: "# Heading\n\nFirst paragraph of the document.",
-	})
-
-	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
-	defer resp.Body.Close()
-	html := readBody(t, resp)
-
-	checks := []struct {
-		name string
-		want string
-	}{
-		{"og:title", `og:title`},
-		{"og:type", `og:type`},
-		{"og:description with excerpt", `First paragraph of the document`},
-		{"twitter:card", `twitter:card`},
-		{"description meta", `name="description"`},
-	}
-	for _, c := range checks {
-		if !strings.Contains(html, c.want) {
-			t.Errorf("document page missing %s: %q not found", c.name, c.want)
-		}
-	}
-}
-
-func TestDocumentPageOGTagsSkipHeadings(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:   "Heading Only",
-		Content: "# Just A Heading",
-	})
-
-	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
-	defer resp.Body.Close()
-	html := readBody(t, resp)
-
-	// heading-only content produces no description, so the meta tag is omitted
-	if strings.Contains(html, `name="description"`) {
-		t.Error("description meta should be absent when content has only headings")
-	}
-}
-
-func TestDocumentPageBreadcrumb(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:   "My Analysis",
-		Content: "content",
-	})
-
-	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
-	defer resp.Body.Close()
-	html := readBody(t, resp)
-
-	if !strings.Contains(html, `class="doc-breadcrumb"`) {
-		t.Error("document page missing breadcrumb nav")
-	}
-	if !strings.Contains(html, "My Analysis") {
-		t.Error("breadcrumb missing document title")
-	}
-	if !strings.Contains(html, `href="/"`) {
-		t.Error("breadcrumb missing link to home")
-	}
-}
-
-func TestDocumentPageMobileTOC(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:   "With Headings",
-		Content: "# Section One\n\nParagraph.\n\n## Section Two\n\nMore.",
-	})
-
-	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
-	defer resp.Body.Close()
-	html := readBody(t, resp)
-
-	if !strings.Contains(html, `class="toc-mobile"`) {
-		t.Error("document page missing mobile TOC when headings are present")
-	}
-	if !strings.Contains(html, `class="toc-mobile-toggle"`) {
-		t.Error("document page missing mobile TOC toggle button")
-	}
-}
-
-func TestDocumentPageNoMobileTOCWhenNoHeadings(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:   "Plain",
-		Content: "Just prose, no headings.",
-	})
-
-	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
-	defer resp.Body.Close()
-	html := readBody(t, resp)
-
-	if strings.Contains(html, `class="toc-mobile"`) {
-		t.Error("toc-mobile should not appear when document has no headings")
-	}
-}
-
-func TestDocumentPageDeleteModal(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:   "Deletable",
-		Content: "content",
-	})
-
-	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
-	defer resp.Body.Close()
-	html := readBody(t, resp)
-
-	if !strings.Contains(html, `id="delete-modal"`) {
-		t.Error("document page missing delete modal")
-	}
-	if !strings.Contains(html, `modal-btn--danger`) {
-		t.Error("document page missing delete confirm button")
-	}
-	if !strings.Contains(html, `modal-btn--cancel`) {
-		t.Error("document page missing delete cancel button")
-	}
-}
-
-func TestHomePageCompactHeroWithDocuments(t *testing.T) {
-	ts, s := newTestServer(t)
-	s.Create(context.Background(), store.Document{
-		Title:      "Doc",
-		Content:    "content",
-		Visibility: store.VisibilityPublic,
-	})
-
-	resp := mustGet(t, ts.URL+"/")
-	defer resp.Body.Close()
-	html := readBody(t, resp)
-
-	if !strings.Contains(html, "hero--compact") {
-		t.Error("home page should use hero--compact class when documents exist")
-	}
-}
-
-func TestHomePageFullHeroWhenEmpty(t *testing.T) {
-	ts, _ := newTestServer(t)
-
-	resp := mustGet(t, ts.URL+"/")
-	defer resp.Body.Close()
-	html := readBody(t, resp)
-
-	if strings.Contains(html, "hero--compact") {
-		t.Error("home page should not use hero--compact class when no documents exist")
-	}
-}
-
-func TestRawDocument(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:   "Raw Test",
-		Content: "# Hello\n\nworld",
-	})
-
-	resp := mustGet(t, fmt.Sprintf("%s/d/%s/raw", ts.URL, doc.ID))
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
-	}
-	ct := resp.Header.Get("Content-Type")
-	if !strings.Contains(ct, "text/plain") {
-		t.Errorf("Content-Type = %q, want text/plain", ct)
-	}
-	body := readBody(t, resp)
-	if body != "# Hello\n\nworld" {
-		t.Errorf("raw body = %q, want original markdown", body)
-	}
-}
-
-func TestRawDocumentNotFound(t *testing.T) {
-	ts, _ := newTestServer(t)
-	resp := mustGet(t, ts.URL+"/d/does-not-exist/raw")
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
-	}
-}
-
-func TestUpdateDocument(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
-		Title:   "Original",
-		Content: "old content",
-	})
-
-	body := `{"title":"Updated Title","content":"new content"}`
-	req, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("PUT: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
-	}
-	var result map[string]any
-	decodeJSON(t, resp.Body, &result)
-	if result["title"] != "Updated Title" {
-		t.Errorf("title = %v, want Updated Title", result["title"])
-	}
-	if result["content"] != "new content" {
-		t.Errorf("content = %v, want new content", result["content"])
-	}
-}
-
-func TestUpdateDocumentNotFound(t *testing.T) {
-	ts, _ := newTestServer(t)
-	body := `{"title":"x","content":"y"}`
-	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/documents/does-not-exist", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("PUT: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
-	}
-}
-
-func TestUpdateDocumentEmptyBody(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{Title: "T", Content: "c"})
-
-	req, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), strings.NewReader(`{}`))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("PUT: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", resp.StatusCode)
+		t.Error("style.css pre.chroma rule must use var(--color-surface-card-strong)")
 	}
 }
 
