@@ -1,7 +1,6 @@
 services:
   pasteai:
     build: .
-    user: "${UID:-1000}:${GID:-1000}"
     ports:
       - "8080:8080"
     volumes:
