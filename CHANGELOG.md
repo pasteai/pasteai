@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.0](https://github.com/pasteai/pasteai/compare/v0.0.4...v0.1.0) (2026-05-18)
+
+
+### Features
+
+* Update docker container to avoid UID and GID injection ([c7f2185](https://github.com/pasteai/pasteai/commit/c7f218591a6d98bbfaec57361900049f4897d0f3))
+* UX polish: accessibility, modal focus trap, TOC active state, copy-link, heading anchors, auth-gated delete, OG image, compact home ([ba1eb37](https://github.com/pasteai/pasteai/commit/ba1eb3747833c92367dac02c4748cd2ff5b87e5e))
+* v0.0.5 ([699118b](https://github.com/pasteai/pasteai/commit/699118bb6b7195aa2c735ee63abc3a4cd1c78197))
+
 ## [0.0.4](https://github.com/pasteai/pasteai/compare/v0.0.3...v0.0.4) (2026-05-17)
 
 
