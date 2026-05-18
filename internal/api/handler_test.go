@@ -440,6 +440,159 @@ func TestDocumentPageCodeBlockThemeCSS(t *testing.T) {
 	}
 }
 
+func TestDocumentPageOGTags(t *testing.T) {
+	ts, s := newTestServer(t)
+	doc, _ := s.Create(context.Background(), store.Document{
+		Title:   "Report Title",
+		Content: "# Heading\n\nFirst paragraph of the document.",
+	})
+
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+
+	checks := []struct {
+		name string
+		want string
+	}{
+		{"og:title", `og:title`},
+		{"og:type", `og:type`},
+		{"og:description with excerpt", `First paragraph of the document`},
+		{"twitter:card", `twitter:card`},
+		{"description meta", `name="description"`},
+	}
+	for _, c := range checks {
+		if !strings.Contains(html, c.want) {
+			t.Errorf("document page missing %s: %q not found", c.name, c.want)
+		}
+	}
+}
+
+func TestDocumentPageOGTagsSkipHeadings(t *testing.T) {
+	ts, s := newTestServer(t)
+	doc, _ := s.Create(context.Background(), store.Document{
+		Title:   "Heading Only",
+		Content: "# Just A Heading",
+	})
+
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+
+	// heading-only content produces no description, so the meta tag is omitted
+	if strings.Contains(html, `name="description"`) {
+		t.Error("description meta should be absent when content has only headings")
+	}
+}
+
+func TestDocumentPageBreadcrumb(t *testing.T) {
+	ts, s := newTestServer(t)
+	doc, _ := s.Create(context.Background(), store.Document{
+		Title:   "My Analysis",
+		Content: "content",
+	})
+
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+
+	if !strings.Contains(html, `class="doc-breadcrumb"`) {
+		t.Error("document page missing breadcrumb nav")
+	}
+	if !strings.Contains(html, "My Analysis") {
+		t.Error("breadcrumb missing document title")
+	}
+	if !strings.Contains(html, `href="/"`) {
+		t.Error("breadcrumb missing link to home")
+	}
+}
+
+func TestDocumentPageMobileTOC(t *testing.T) {
+	ts, s := newTestServer(t)
+	doc, _ := s.Create(context.Background(), store.Document{
+		Title:   "With Headings",
+		Content: "# Section One\n\nParagraph.\n\n## Section Two\n\nMore.",
+	})
+
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+
+	if !strings.Contains(html, `class="toc-mobile"`) {
+		t.Error("document page missing mobile TOC when headings are present")
+	}
+	if !strings.Contains(html, `class="toc-mobile-toggle"`) {
+		t.Error("document page missing mobile TOC toggle button")
+	}
+}
+
+func TestDocumentPageNoMobileTOCWhenNoHeadings(t *testing.T) {
+	ts, s := newTestServer(t)
+	doc, _ := s.Create(context.Background(), store.Document{
+		Title:   "Plain",
+		Content: "Just prose, no headings.",
+	})
+
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+
+	if strings.Contains(html, `class="toc-mobile"`) {
+		t.Error("toc-mobile should not appear when document has no headings")
+	}
+}
+
+func TestDocumentPageDeleteModal(t *testing.T) {
+	ts, s := newTestServer(t)
+	doc, _ := s.Create(context.Background(), store.Document{
+		Title:   "Deletable",
+		Content: "content",
+	})
+
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+
+	if !strings.Contains(html, `id="delete-modal"`) {
+		t.Error("document page missing delete modal")
+	}
+	if !strings.Contains(html, `modal-btn--danger`) {
+		t.Error("document page missing delete confirm button")
+	}
+	if !strings.Contains(html, `modal-btn--cancel`) {
+		t.Error("document page missing delete cancel button")
+	}
+}
+
+func TestHomePageCompactHeroWithDocuments(t *testing.T) {
+	ts, s := newTestServer(t)
+	s.Create(context.Background(), store.Document{
+		Title:      "Doc",
+		Content:    "content",
+		Visibility: store.VisibilityPublic,
+	})
+
+	resp := mustGet(t, ts.URL+"/")
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+
+	if !strings.Contains(html, "hero--compact") {
+		t.Error("home page should use hero--compact class when documents exist")
+	}
+}
+
+func TestHomePageFullHeroWhenEmpty(t *testing.T) {
+	ts, _ := newTestServer(t)
+
+	resp := mustGet(t, ts.URL+"/")
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+
+	if strings.Contains(html, "hero--compact") {
+		t.Error("home page should not use hero--compact class when no documents exist")
+	}
+}
+
 func TestStaticFileServed(t *testing.T) {
 	ts, _ := newTestServer(t)
 	resp := mustGet(t, ts.URL+"/static/style.css")

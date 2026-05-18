@@ -26,6 +26,7 @@ type Server struct {
 	baseURL      string
 	logger       *log.Logger
 	chromaCSS    template.CSS
+	authProvider AuthProvider
 }
 
 type Config struct {
@@ -37,11 +38,12 @@ type Config struct {
 
 func NewServer(s store.Store, cfg Config) *http.Server {
 	srv := &Server{
-		mux:       http.NewServeMux(),
-		store:     s,
-		baseURL:   cfg.BaseURL,
-		logger:    cfg.Logger,
-		chromaCSS: renderer.ThemeCSS(),
+		mux:          http.NewServeMux(),
+		store:        s,
+		baseURL:      cfg.BaseURL,
+		logger:       cfg.Logger,
+		chromaCSS:    renderer.ThemeCSS(),
+		authProvider: cfg.AuthProvider,
 	}
 	srv.loadTemplates()
 	srv.registerRoutes()
@@ -111,6 +113,10 @@ type documentData struct {
 	RenderedHTML template.HTML
 	Headings     []renderer.Heading
 	ChromaCSS    template.CSS
+	Description  string
+	PageURL      string
+	OGImageURL   string
+	ShowDelete   bool
 }
 
 func (s *Server) handleViewDocument(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +142,34 @@ func (s *Server) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 		RenderedHTML: result.HTML,
 		Headings:     result.Headings,
 		ChromaCSS:    s.chromaCSS,
+		Description:  docDescription(doc.Content),
+		PageURL:      s.baseURL + "/d/" + doc.ID,
+		OGImageURL:   s.baseURL + "/static/og-image.svg",
+		ShowDelete:   s.isAuthenticated(r),
 	})
+}
+
+func (s *Server) isAuthenticated(r *http.Request) bool {
+	if s.authProvider == nil {
+		return true
+	}
+	ownerID, err := s.authProvider.Authenticate(r)
+	return err == nil && ownerID != ""
+}
+
+func docDescription(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		const max = 160
+		if len(line) > max {
+			return line[:max] + "…"
+		}
+		return line
+	}
+	return ""
 }
 
 // ── API handlers ───────────────────────────────────────────

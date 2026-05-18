@@ -1,6 +1,17 @@
 {{template "base.html" .}}
 
-{{define "extra-head"}}<style>{{.ChromaCSS}}</style>{{end}}
+{{define "extra-head"}}
+<style>{{.ChromaCSS}}</style>
+{{if .Description}}<meta name="description" content="{{.Description}}">{{end}}
+{{if .PageURL}}<meta property="og:url" content="{{.PageURL}}">{{end}}
+<meta property="og:type" content="article">
+<meta property="og:title" content="{{.Document.Title}} — PasteAI">
+{{if .Description}}<meta property="og:description" content="{{.Description}}">{{end}}
+{{if .OGImageURL}}<meta property="og:image" content="{{.OGImageURL}}">{{end}}
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{.Document.Title}} — PasteAI">
+{{if .Description}}<meta name="twitter:description" content="{{.Description}}">{{end}}
+{{end}}
 
 {{define "title"}}{{.Document.Title}} — PasteAI{{end}}
 
@@ -8,8 +19,33 @@
 <div class="page">
   <div class="content-wrapper">
     <div class="content-inner">
+      <nav class="doc-breadcrumb">
+        <a href="/">PasteAI</a>
+        <span class="doc-breadcrumb-sep">/</span>
+        <span>{{.Document.Title}}</span>
+      </nav>
+      {{if .Headings}}
+      <div class="toc-mobile">
+        <button class="toc-mobile-toggle" onclick="toggleMobileToc(this)">Contents</button>
+        <div class="toc-mobile-drawer">
+          <ul class="toc-list">
+            {{range .Headings}}
+            <li class="toc-item toc-h{{.Level}}">
+              <a href="#{{.ID}}">{{.Text}}</a>
+            </li>
+            {{end}}
+          </ul>
+        </div>
+      </div>
+      {{end}}
       <header class="doc-header">
-        <h1>{{.Document.Title}}</h1>
+        <div class="doc-header-top">
+          <h1>{{.Document.Title}}</h1>
+          <button class="copy-link-btn" onclick="copyDocLink()" title="Copy link">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            <span class="copy-link-text">Copy link</span>
+          </button>
+        </div>
         <div class="doc-meta">
           {{if .Document.Author}}by {{.Document.Author}} &middot; {{end}}{{.Document.CreatedAt.Format "January 2, 2006 at 15:04 UTC"}}
         </div>
@@ -18,8 +54,8 @@
         {{.RenderedHTML}}
       </article>
       <footer class="doc-footer">
-        Published with <a href="https://github.com/pasteai/pasteai" target="_blank" rel="noopener">PasteAI</a>
-        <button class="delete-btn" onclick="deleteDoc('{{.Document.ID}}')">Delete</button>
+        <span>Published with <a href="https://github.com/pasteai/pasteai" target="_blank" rel="noopener">PasteAI</a></span>
+        {{if .ShowDelete}}<button class="delete-btn" onclick="deleteDoc('{{.Document.ID}}')">Delete</button>{{end}}
       </footer>
     </div>
   </div>
@@ -40,17 +76,113 @@
   {{end}}
 </div>
 
+<div class="modal-overlay" id="delete-modal" onclick="handleOverlayClick(event)">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <h3 class="modal-title" id="modal-title">Delete document?</h3>
+    <p class="modal-body">This cannot be undone.</p>
+    <div class="modal-actions">
+      <button class="modal-btn modal-btn--cancel" id="modal-cancel-btn" onclick="closeDeleteModal()">Cancel</button>
+      <button class="modal-btn modal-btn--danger" id="modal-confirm-btn">Delete</button>
+    </div>
+  </div>
+</div>
+
 <script>
+  // ── Delete modal ──────────────────────────────────────────
+  var _deleteId = null;
+  var _deleteTrigger = null;
+
   function deleteDoc(id) {
-    if (!confirm('Delete this document? This cannot be undone.')) return;
-    fetch('/api/documents/' + id, { method: 'DELETE' })
-      .then(function(r) {
-        if (r.status === 204) { window.location.href = '/'; }
-        else { alert('Delete failed — try again.'); }
-      })
-      .catch(function() { alert('Delete failed — try again.'); });
+    _deleteId = id;
+    _deleteTrigger = document.activeElement;
+    document.getElementById('delete-modal').classList.add('open');
+    document.getElementById('modal-cancel-btn').focus();
   }
 
+  function closeDeleteModal() {
+    document.getElementById('delete-modal').classList.remove('open');
+    _deleteId = null;
+    if (_deleteTrigger) { _deleteTrigger.focus(); _deleteTrigger = null; }
+  }
+
+  function handleOverlayClick(e) {
+    if (e.target === document.getElementById('delete-modal')) closeDeleteModal();
+  }
+
+  document.getElementById('delete-modal').addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') { closeDeleteModal(); return; }
+    if (e.key !== 'Tab') return;
+    var focusable = this.querySelectorAll('button');
+    var first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+
+  var confirmBtn = document.getElementById('modal-confirm-btn');
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', function() {
+      if (!_deleteId) return;
+      fetch('/api/documents/' + _deleteId, { method: 'DELETE' })
+        .then(function(r) {
+          if (r.status === 204) { window.location.href = '/'; }
+          else { closeDeleteModal(); alert('Delete failed - try again.'); }
+        })
+        .catch(function() { closeDeleteModal(); alert('Delete failed - try again.'); });
+    });
+  }
+
+  // ── Mobile TOC ────────────────────────────────────────────
+  function toggleMobileToc(btn) {
+    var drawer = btn.nextElementSibling;
+    drawer.classList.toggle('open');
+    btn.setAttribute('aria-expanded', drawer.classList.contains('open') ? 'true' : 'false');
+    btn.textContent = drawer.classList.contains('open') ? 'Contents ▲' : 'Contents';
+  }
+
+  // ── Copy link ─────────────────────────────────────────────
+  function copyDocLink() {
+    navigator.clipboard.writeText(window.location.href).then(function() {
+      var span = document.querySelector('.copy-link-text');
+      span.textContent = 'Copied!';
+      setTimeout(function() { span.textContent = 'Copy link'; }, 2000);
+    });
+  }
+
+  // ── Heading anchors ───────────────────────────────────────
+  document.querySelectorAll('.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6').forEach(function(h) {
+    if (!h.id) return;
+    var a = document.createElement('a');
+    a.className = 'heading-anchor';
+    a.href = '#' + h.id;
+    a.setAttribute('aria-label', 'Link to ' + h.textContent.trim());
+    a.textContent = '#';
+    h.appendChild(a);
+  });
+
+  // ── TOC active highlight ──────────────────────────────────
+  (function() {
+    var headings = document.querySelectorAll('.markdown-body h1[id], .markdown-body h2[id], .markdown-body h3[id]');
+    var tocLinks = document.querySelectorAll('.toc-panel .toc-item a');
+    if (!headings.length || !tocLinks.length) return;
+
+    var linkMap = {};
+    tocLinks.forEach(function(a) { linkMap[a.getAttribute('href').slice(1)] = a; });
+
+    var active = null;
+    var observer = new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting) {
+          if (active) active.classList.remove('toc-active');
+          active = linkMap[entry.target.id];
+          if (active) active.classList.add('toc-active');
+        }
+      });
+    }, { rootMargin: '-10% 0px -80% 0px' });
+
+    headings.forEach(function(h) { observer.observe(h); });
+  })();
+
+  // ── Code block copy buttons ───────────────────────────────
   document.querySelectorAll('.markdown-body pre.chroma').forEach(function(pre) {
     var btn = document.createElement('button');
     btn.className = 'copy-btn';

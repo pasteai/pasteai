@@ -69,8 +69,8 @@ clean:
 
 ## docker-restart: rebuild image and restart compose
 docker-restart:
-	docker compose build --no-cache
-	docker compose up -d
+	UID=$$(id -u) GID=$$(id -g) docker compose build --no-cache
+	UID=$$(id -u) GID=$$(id -g) docker compose up -d
 
 ## release-dry-run: simulate a goreleaser release (requires goreleaser)
 release-dry-run:
