@@ -6,13 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
 	bolt "go.etcd.io/bbolt"
+
+	"github.com/pasteai/pasteai/server"
 )
 
 var (
@@ -20,25 +20,19 @@ var (
 	bucketByTime = []byte("documents_by_time")
 )
 
-var _ Store = (*BoltStore)(nil) // compile-time interface check
+var _ server.Store = (*BoltStore)(nil) // compile-time interface check
 
 type BoltStore struct {
-	db       *bolt.DB
-	filesDir string
+	db *bolt.DB
 }
 
-// dirFromDBPath derives the content files directory from the DB path.
+// DirFromDBPath derives the content files directory from the DB path.
 // ~/.pasteai/documents.db  →  ~/.pasteai/documents/
-func dirFromDBPath(path string) string {
+func DirFromDBPath(path string) string {
 	return filepath.Join(filepath.Dir(path), "documents")
 }
 
 func NewBolt(path string) (*BoltStore, error) {
-	filesDir := dirFromDBPath(path)
-	if err := os.MkdirAll(filesDir, 0700); err != nil {
-		return nil, fmt.Errorf("create documents dir: %w", err)
-	}
-
 	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("open bbolt: %w", err)
@@ -54,35 +48,23 @@ func NewBolt(path string) (*BoltStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("create buckets: %w", err)
 	}
-	return &BoltStore{db: db, filesDir: filesDir}, nil
+	return &BoltStore{db: db}, nil
 }
 
 func (s *BoltStore) Close() error {
 	return s.db.Close()
 }
 
-func (s *BoltStore) contentPath(id string) string {
-	return filepath.Join(s.filesDir, id+".md")
-}
-
-func (s *BoltStore) Create(_ context.Context, doc Document) (*Document, error) {
+func (s *BoltStore) Create(_ context.Context, doc server.Document) (*server.Document, error) {
 	doc.ID = uuid.New().String()
 	if doc.Visibility == "" {
-		doc.Visibility = VisibilityPublic
+		doc.Visibility = server.VisibilityPublic
 	}
 	doc.CreatedAt = time.Now().UTC()
+	doc.Content = "" // content is managed by ContentBackend
 
-	// Write content to disk first — clean failure if this fails (nothing in bbolt yet).
-	if err := os.WriteFile(s.contentPath(doc.ID), []byte(doc.Content), 0600); err != nil {
-		return nil, fmt.Errorf("write content file: %w", err)
-	}
-
-	// Marshal metadata only — content lives on disk.
-	meta := doc
-	meta.Content = ""
-	data, err := json.Marshal(meta)
+	data, err := json.Marshal(doc)
 	if err != nil {
-		os.Remove(s.contentPath(doc.ID))
 		return nil, err
 	}
 
@@ -94,19 +76,17 @@ func (s *BoltStore) Create(_ context.Context, doc Document) (*Document, error) {
 		}
 		return tx.Bucket(bucketByTime).Put(timeKey, []byte(doc.ID))
 	}); err != nil {
-		// bbolt write failed — content file is orphaned on disk (not indexed, benign).
-		log.Printf("pasteai: bbolt write failed for %s, content file orphaned: %v", doc.ID, err)
 		return nil, err
 	}
 	return &doc, nil
 }
 
-func (s *BoltStore) List(_ context.Context, opts ListOptions) (*ListResult, error) {
+func (s *BoltStore) List(_ context.Context, opts server.ListOptions) (*server.ListResult, error) {
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 50
 	}
-	var docs []Document
+	var docs []server.Document
 
 	err := s.db.View(func(tx *bolt.Tx) error {
 		timeBucket := tx.Bucket(bucketByTime)
@@ -138,7 +118,7 @@ func (s *BoltStore) List(_ context.Context, opts ListOptions) (*ListResult, erro
 			if data == nil {
 				continue
 			}
-			var doc Document
+			var doc server.Document
 			if err := json.Unmarshal(data, &doc); err != nil {
 				continue
 			}
@@ -146,7 +126,7 @@ func (s *BoltStore) List(_ context.Context, opts ListOptions) (*ListResult, erro
 			if opts.OwnerID != "" {
 				visible = doc.OwnerID == opts.OwnerID
 			} else {
-				visible = doc.Visibility == VisibilityPublic
+				visible = doc.Visibility == server.VisibilityPublic
 			}
 			if visible {
 				docs = append(docs, doc)
@@ -158,7 +138,7 @@ func (s *BoltStore) List(_ context.Context, opts ListOptions) (*ListResult, erro
 		return nil, err
 	}
 
-	result := &ListResult{Documents: docs}
+	result := &server.ListResult{Documents: docs}
 	// If we filled the page exactly, there may be more — provide a cursor.
 	if len(docs) == limit {
 		last := docs[len(docs)-1]
@@ -167,37 +147,29 @@ func (s *BoltStore) List(_ context.Context, opts ListOptions) (*ListResult, erro
 	return result, nil
 }
 
-func (s *BoltStore) Get(_ context.Context, id string) (*Document, error) {
-	var doc Document
+func (s *BoltStore) Get(_ context.Context, id string) (*server.Document, error) {
+	var doc server.Document
 	err := s.db.View(func(tx *bolt.Tx) error {
 		data := tx.Bucket(bucketDocs).Get([]byte(id))
 		if data == nil {
-			return ErrNotFound
+			return server.ErrNotFound
 		}
 		return json.Unmarshal(data, &doc)
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	// Read content from disk.
-	content, err := os.ReadFile(s.contentPath(id))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrContentMissing, id)
-		}
-		return nil, fmt.Errorf("read content file: %w", err)
-	}
-	doc.Content = string(content)
+	// Content is managed by ContentBackend; return doc with empty Content.
+	doc.Content = ""
 	return &doc, nil
 }
 
-func (s *BoltStore) Update(_ context.Context, id, title, content string) (*Document, error) {
-	var doc Document
+func (s *BoltStore) Update(_ context.Context, id, title string) (*server.Document, error) {
+	var doc server.Document
 	if err := s.db.View(func(tx *bolt.Tx) error {
 		data := tx.Bucket(bucketDocs).Get([]byte(id))
 		if data == nil {
-			return ErrNotFound
+			return server.ErrNotFound
 		}
 		return json.Unmarshal(data, &doc)
 	}); err != nil {
@@ -206,12 +178,6 @@ func (s *BoltStore) Update(_ context.Context, id, title, content string) (*Docum
 
 	if title != "" {
 		doc.Title = title
-	}
-	if content != "" {
-		if err := os.WriteFile(s.contentPath(id), []byte(content), 0600); err != nil {
-			return nil, fmt.Errorf("write content file: %w", err)
-		}
-		doc.Content = content
 	}
 
 	meta := doc
@@ -226,23 +192,18 @@ func (s *BoltStore) Update(_ context.Context, id, title, content string) (*Docum
 		return nil, err
 	}
 
-	if content == "" {
-		raw, err := os.ReadFile(s.contentPath(id))
-		if err == nil {
-			doc.Content = string(raw)
-		}
-	}
+	doc.Content = ""
 	return &doc, nil
 }
 
 func (s *BoltStore) Delete(_ context.Context, id string) error {
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
 		docBucket := tx.Bucket(bucketDocs)
 		data := docBucket.Get([]byte(id))
 		if data == nil {
-			return ErrNotFound
+			return server.ErrNotFound
 		}
-		var doc Document
+		var doc server.Document
 		if err := json.Unmarshal(data, &doc); err != nil {
 			return err
 		}
@@ -252,15 +213,6 @@ func (s *BoltStore) Delete(_ context.Context, id string) error {
 		timeKey := makeTimeKey(doc.CreatedAt, doc.ID)
 		return tx.Bucket(bucketByTime).Delete(timeKey)
 	})
-	if err != nil {
-		return err
-	}
-
-	// Remove content file — non-fatal if already missing.
-	if err := os.Remove(s.contentPath(id)); err != nil && !os.IsNotExist(err) {
-		log.Printf("pasteai: delete content file %s: %v", id, err)
-	}
-	return nil
 }
 
 // makeTimeKey builds an 8-byte big-endian nanosecond timestamp followed by the doc ID.

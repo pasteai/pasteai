@@ -1,28 +1,25 @@
-package api
+package server
 
 import (
 	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
-	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pasteai/pasteai/internal/renderer"
-	"github.com/pasteai/pasteai/internal/store"
 	"github.com/pasteai/pasteai/web"
 )
 
-type Server struct {
+type srv struct {
 	mux          *http.ServeMux
-	store        store.Store
+	store        Store
+	content      ContentBackend
 	homeTmpl     *template.Template
 	documentTmpl *template.Template
 	errorTmpl    *template.Template
@@ -32,44 +29,36 @@ type Server struct {
 	authProvider AuthProvider
 }
 
-type Config struct {
-	Addr         string
-	BaseURL      string
-	AuthProvider AuthProvider // optional; if set, Bearer token auth is enforced on writes
-	Logger       *log.Logger
-}
-
-func NewServer(s store.Store, cfg Config) *http.Server {
-	srv := &Server{
-		mux:          http.NewServeMux(),
-		store:        s,
-		baseURL:      cfg.BaseURL,
-		logger:       cfg.Logger,
-		chromaCSS:    renderer.ThemeCSS(),
-		authProvider: cfg.AuthProvider,
+// NewServer constructs the PasteAI HTTP handler. The caller is responsible for
+// wrapping it in an *http.Server with appropriate timeouts and calling ListenAndServe.
+func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
+	logger := opts.Logger
+	if logger == nil {
+		logger = log.Default()
 	}
-	srv.loadTemplates()
-	srv.registerRoutes()
 
-	var handler http.Handler = srv.mux
-	if cfg.AuthProvider != nil {
-		handler = authMiddleware(cfg.AuthProvider, srv.mux)
+	s := &srv{
+		mux:          http.NewServeMux(),
+		store:        store,
+		content:      content,
+		baseURL:      opts.BaseURL,
+		logger:       logger,
+		chromaCSS:    renderer.ThemeCSS(),
+		authProvider: opts.AuthProvider,
+	}
+	s.loadTemplates()
+	s.registerRoutes()
+
+	var handler http.Handler = s.mux
+	if opts.AuthProvider != nil {
+		handler = authMiddleware(opts.AuthProvider, s.mux)
 	}
 	handler = gzipHandler(handler)
 	handler = securityHeaders(handler)
-
-	return &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           handler,
-		ReadTimeout:       30 * time.Second,
-		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
+	return handler
 }
 
-func (s *Server) loadTemplates() {
-	// Each page gets its own template set so {{define "body"}} doesn't conflict.
+func (s *srv) loadTemplates() {
 	s.homeTmpl = template.Must(template.New("").ParseFS(web.FS,
 		"templates/base.html", "templates/home.html"))
 	s.documentTmpl = template.Must(template.New("").ParseFS(web.FS,
@@ -78,7 +67,7 @@ func (s *Server) loadTemplates() {
 		"templates/base.html", "templates/error.html"))
 }
 
-func (s *Server) registerRoutes() {
+func (s *srv) registerRoutes() {
 	staticFS, err := fs.Sub(web.FS, "static")
 	if err != nil {
 		panic("web.FS missing static directory: " + err.Error())
@@ -99,12 +88,12 @@ func (s *Server) registerRoutes() {
 // ── Web UI handlers ────────────────────────────────────────
 
 type homeData struct {
-	Documents []store.Document
+	Documents []Document
 	NextToken string
 }
 
-func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
-	result, err := s.store.List(r.Context(), store.ListOptions{
+func (s *srv) handleHome(w http.ResponseWriter, r *http.Request) {
+	result, err := s.store.List(r.Context(), ListOptions{
 		OwnerID:   ownerFromCtx(r.Context()),
 		Limit:     20,
 		NextToken: r.URL.Query().Get("token"),
@@ -119,24 +108,30 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleViewRaw(w http.ResponseWriter, r *http.Request) {
+func (s *srv) handleViewRaw(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	doc, err := s.store.Get(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
 			http.NotFound(w, r)
 			return
 		}
 		s.serverError(w, err)
 		return
 	}
+	raw, err := s.content.Get(r.Context(), id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	doc.Content = string(raw)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s.md"`, id))
 	fmt.Fprint(w, doc.Content)
 }
 
 type documentData struct {
-	Document     store.Document
+	Document     Document
 	RenderedHTML template.HTML
 	Headings     []renderer.Heading
 	ChromaCSS    template.CSS
@@ -147,17 +142,23 @@ type documentData struct {
 	ShowDelete   bool
 }
 
-func (s *Server) handleViewDocument(w http.ResponseWriter, r *http.Request) {
+func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	doc, err := s.store.Get(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
 			s.renderNotFound(w)
 			return
 		}
 		s.serverError(w, err)
 		return
 	}
+	raw, err := s.content.Get(r.Context(), id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	doc.Content = string(raw)
 
 	result, err := renderer.Render(doc.Content)
 	if err != nil {
@@ -178,7 +179,7 @@ func (s *Server) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) isAuthenticated(r *http.Request) bool {
+func (s *srv) isAuthenticated(r *http.Request) bool {
 	if s.authProvider == nil {
 		return true
 	}
@@ -208,7 +209,7 @@ type updateRequest struct {
 	Content string `json:"content"`
 }
 
-func (s *Server) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
+func (s *srv) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req updateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -219,14 +220,26 @@ func (s *Server) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title or content required"})
 		return
 	}
-	doc, err := s.store.Update(r.Context(), id, req.Title, req.Content)
+	doc, err := s.store.Update(r.Context(), id, req.Title)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
 		}
 		s.serverError(w, err)
 		return
+	}
+	if req.Content != "" {
+		if err := s.content.Put(r.Context(), id, []byte(req.Content)); err != nil {
+			s.serverError(w, err)
+			return
+		}
+		doc.Content = req.Content
+	} else {
+		raw, err := s.content.Get(r.Context(), id)
+		if err == nil {
+			doc.Content = string(raw)
+		}
 	}
 	writeJSON(w, http.StatusOK, documentDetailResponse{
 		documentResponse: s.toResponse(r, *doc),
@@ -262,7 +275,7 @@ const (
 	maxContentBytes = 512 * 1024 // 512 KB
 )
 
-func (s *Server) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
+func (s *srv) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	var req createRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -295,20 +308,19 @@ func (s *Server) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vis := store.Visibility(req.Visibility)
+	vis := Visibility(req.Visibility)
 	switch vis {
-	case "", store.VisibilityPublic:
-		vis = store.VisibilityPublic
-	case store.VisibilityUnlisted:
+	case "", VisibilityPublic:
+		vis = VisibilityPublic
+	case VisibilityUnlisted:
 		// valid
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "visibility must be public or unlisted"})
 		return
 	}
 
-	doc, err := s.store.Create(r.Context(), store.Document{
+	doc, err := s.store.Create(r.Context(), Document{
 		Title:      req.Title,
-		Content:    req.Content,
 		Author:     req.Author,
 		OwnerID:    ownerFromCtx(r.Context()),
 		Visibility: vis,
@@ -317,6 +329,13 @@ func (s *Server) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	if err := s.content.Put(r.Context(), doc.ID, []byte(req.Content)); err != nil {
+		// best-effort rollback — content write failed after metadata was stored
+		s.store.Delete(r.Context(), doc.ID)
+		s.serverError(w, err)
+		return
+	}
+	doc.Content = req.Content
 
 	writeJSON(w, http.StatusCreated, documentDetailResponse{
 		documentResponse: s.toResponse(r, *doc),
@@ -329,8 +348,8 @@ type listResponse struct {
 	NextToken string             `json:"next_token,omitempty"`
 }
 
-func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
-	result, err := s.store.List(r.Context(), store.ListOptions{
+func (s *srv) handleListDocuments(w http.ResponseWriter, r *http.Request) {
+	result, err := s.store.List(r.Context(), ListOptions{
 		OwnerID:   ownerFromCtx(r.Context()),
 		Limit:     50,
 		NextToken: r.URL.Query().Get("next_token"),
@@ -347,30 +366,42 @@ func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, listResponse{Documents: docs, NextToken: result.NextToken})
 }
 
-func (s *Server) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
+func (s *srv) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := s.store.Delete(r.Context(), id); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
 		}
 		s.serverError(w, err)
 		return
 	}
+	// non-fatal: content file may already be gone
+	s.content.Delete(r.Context(), id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleGetDocument(w http.ResponseWriter, r *http.Request) {
+func (s *srv) handleGetDocument(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	doc, err := s.store.Get(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 			return
 		}
 		s.serverError(w, err)
 		return
 	}
+	raw, err := s.content.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		s.serverError(w, err)
+		return
+	}
+	doc.Content = string(raw)
 
 	writeJSON(w, http.StatusOK, documentDetailResponse{
 		documentResponse: s.toResponse(r, *doc),
@@ -380,7 +411,7 @@ func (s *Server) handleGetDocument(w http.ResponseWriter, r *http.Request) {
 
 // ── Helpers ────────────────────────────────────────────────
 
-func (s *Server) toResponse(r *http.Request, d store.Document) documentResponse {
+func (s *srv) toResponse(r *http.Request, d Document) documentResponse {
 	return documentResponse{
 		ID:         d.ID,
 		Title:      d.Title,
@@ -391,7 +422,7 @@ func (s *Server) toResponse(r *http.Request, d store.Document) documentResponse 
 	}
 }
 
-func (s *Server) renderWith(w http.ResponseWriter, tmpl *template.Template, data any) {
+func (s *srv) renderWith(w http.ResponseWriter, tmpl *template.Template, data any) {
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "base.html", data); err != nil {
 		s.logger.Printf("template error: %v", err)
@@ -402,7 +433,7 @@ func (s *Server) renderWith(w http.ResponseWriter, tmpl *template.Template, data
 	buf.WriteTo(w)
 }
 
-func (s *Server) renderNotFound(w http.ResponseWriter) {
+func (s *srv) renderNotFound(w http.ResponseWriter) {
 	var buf bytes.Buffer
 	data := map[string]string{"Message": "Document not found or has been removed."}
 	if err := s.errorTmpl.ExecuteTemplate(&buf, "base.html", data); err != nil {
@@ -415,12 +446,12 @@ func (s *Server) renderNotFound(w http.ResponseWriter) {
 	buf.WriteTo(w)
 }
 
-func (s *Server) serverError(w http.ResponseWriter, err error) {
+func (s *srv) serverError(w http.ResponseWriter, err error) {
 	s.logger.Printf("internal error: %v", err)
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 }
 
-func (s *Server) docURL(r *http.Request, id string) string {
+func (s *srv) docURL(r *http.Request, id string) string {
 	if s.baseURL != "" {
 		return s.baseURL + "/d/" + id
 	}
@@ -448,33 +479,5 @@ func staticCacheHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		next.ServeHTTP(w, r)
-	})
-}
-
-var gzipPool = sync.Pool{New: func() any { w, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed); return w }}
-
-type gzipResponseWriter struct {
-	http.ResponseWriter
-	w *gzip.Writer
-}
-
-func (g gzipResponseWriter) Write(b []byte) (int, error) { return g.w.Write(b) }
-
-// gzipHandler compresses responses for clients that accept gzip encoding.
-func gzipHandler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		gz := gzipPool.Get().(*gzip.Writer)
-		gz.Reset(w)
-		defer func() {
-			gz.Close()
-			gzipPool.Put(gz)
-		}()
-		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("Vary", "Accept-Encoding")
-		next.ServeHTTP(gzipResponseWriter{ResponseWriter: w, w: gz}, r)
 	})
 }

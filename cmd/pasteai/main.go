@@ -8,11 +8,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
-	"github.com/pasteai/pasteai/internal/api"
-	"github.com/pasteai/pasteai/internal/mcp"
 	"github.com/pasteai/pasteai/internal/setup"
-	"github.com/pasteai/pasteai/internal/store"
+	"github.com/pasteai/pasteai/mcp"
+	"github.com/pasteai/pasteai/server"
+	"github.com/pasteai/pasteai/store"
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
@@ -64,23 +65,36 @@ func runServe(args []string) {
 
 	logger := log.New(os.Stderr, "[pasteai] ", log.LstdFlags)
 
-	s, err := store.NewBolt(*dbPath)
+	boltStore, err := store.NewBolt(*dbPath)
 	if err != nil {
 		logger.Fatalf("failed to open database at %s: %v", *dbPath, err)
 	}
-	defer s.Close()
+	defer boltStore.Close()
 
-	cfg := api.Config{
-		Addr:    *addr,
+	diskContent, err := store.NewDiskContent(store.DirFromDBPath(*dbPath))
+	if err != nil {
+		logger.Fatalf("failed to open content directory: %v", err)
+	}
+
+	opts := server.Options{
 		BaseURL: *baseURL,
 		Logger:  logger,
 	}
 	if *apiKey != "" {
-		cfg.AuthProvider = api.NewStaticKeyAuth(map[string]string{*apiKey: "owner"})
+		opts.AuthProvider = server.NewStaticKeyAuth(map[string]string{*apiKey: "owner"})
 	} else {
 		logger.Printf("warning: no -api-key set; all API writes including DELETE are open to any caller that can reach %s", *addr)
 	}
-	srv := api.NewServer(s, cfg)
+	handler := server.NewServer(boltStore, diskContent, opts)
+
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           handler,
+		ReadTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
 	logger.Printf("pasteai v%s listening on %s", version, *addr)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -89,7 +103,10 @@ func runServe(args []string) {
 }
 
 func runMCP() {
-	s := mcp.New()
+	s := mcp.New(mcp.Options{
+		URL:    os.Getenv("PASTEAI_URL"),
+		APIKey: os.Getenv("PASTEAI_API_KEY"),
+	})
 	if err := s.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp error: %v\n", err)
 		os.Exit(1)

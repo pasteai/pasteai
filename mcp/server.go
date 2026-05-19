@@ -18,10 +18,28 @@ import (
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/pasteai/pasteai/internal/api"
-	"github.com/pasteai/pasteai/internal/store"
+	"github.com/pasteai/pasteai/server"
+	"github.com/pasteai/pasteai/store"
 )
 
+// Options configures the MCP server. All fields are optional.
+type Options struct {
+	// URL of the pasteai HTTP server. If empty, an embedded server is started
+	// automatically on EmbeddedPort using the default database path.
+	URL string
+
+	// APIKey is sent as a Bearer token on all API requests. Optional.
+	APIKey string
+
+	// EmbeddedPort is the port for the embedded HTTP server when URL is empty.
+	// Defaults to "18080".
+	EmbeddedPort string
+
+	// Logger for diagnostic output. Defaults to log.Default() with an [pasteai-mcp] prefix.
+	Logger *log.Logger
+}
+
+// Server is an MCP stdio server that forwards tool calls to a pasteai HTTP server.
 type Server struct {
 	baseURL    string
 	apiKey     string
@@ -29,28 +47,35 @@ type Server struct {
 	httpClient *http.Client
 }
 
-func New() *Server {
-	rawURL := os.Getenv("PASTEAI_URL")
-	embedded := rawURL == ""
-	embeddedPort := os.Getenv("PASTEAI_EMBEDDED_PORT")
+// New creates a new MCP Server. If opts.URL is empty and no pasteai server is
+// responding on the embedded port, an embedded HTTP server is started in-process.
+func New(opts Options) *Server {
+	logger := opts.Logger
+	if logger == nil {
+		logger = log.New(os.Stderr, "[pasteai-mcp] ", log.LstdFlags)
+	}
+
+	embeddedPort := opts.EmbeddedPort
 	if embeddedPort == "" {
 		embeddedPort = "18080"
 	}
+
+	rawURL := opts.URL
+	embedded := rawURL == ""
 	if embedded {
 		rawURL = "http://localhost:" + embeddedPort
 	}
 
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		fmt.Fprintf(os.Stderr, "[pasteai-mcp] PASTEAI_URL must be an http or https URL, got: %q\n", rawURL)
+		fmt.Fprintf(os.Stderr, "[pasteai-mcp] URL must be http or https, got: %q\n", rawURL)
 		os.Exit(1)
 	}
-	// Strip any path/query/fragment so our appended paths are always relative to the root.
 	u.Path, u.RawQuery, u.Fragment = "", "", ""
 	baseURL := u.String()
 
 	if embedded && !isResponding(baseURL) {
-		if err := startEmbedded(embeddedPort); err != nil {
+		if err := startEmbedded(embeddedPort, logger); err != nil {
 			fmt.Fprintf(os.Stderr, "[pasteai-mcp] failed to start embedded server: %v\n", err)
 			os.Exit(1)
 		}
@@ -58,81 +83,19 @@ func New() *Server {
 			fmt.Fprintf(os.Stderr, "[pasteai-mcp] embedded server did not become ready within 5s\n")
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "[pasteai-mcp] started embedded server, documents at ~/.pasteai/documents.db\n")
+		logger.Printf("started embedded server, documents at ~/.pasteai/documents.db")
 	} else if embedded {
-		fmt.Fprintf(os.Stderr, "[pasteai-mcp] using existing server at %s\n", baseURL)
+		logger.Printf("using existing server at %s", baseURL)
 	} else {
-		fmt.Fprintf(os.Stderr, "[pasteai-mcp] using remote server at %s\n", baseURL)
+		logger.Printf("using remote server at %s", baseURL)
 	}
 
 	return &Server{
 		baseURL:    baseURL,
-		apiKey:     os.Getenv("PASTEAI_API_KEY"),
-		logger:     log.New(os.Stderr, "[pasteai-mcp] ", log.LstdFlags),
+		apiKey:     opts.APIKey,
+		logger:     logger,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
-}
-
-// isResponding does a quick GET to confirm a pasteai server is already up.
-func isResponding(baseURL string) bool {
-	c := &http.Client{Timeout: 500 * time.Millisecond}
-	resp, err := c.Get(baseURL + "/api/documents")
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode < 500
-}
-
-// startEmbedded opens the db, binds the given port, and starts the HTTP server
-// in a goroutine. Binding synchronously means a port conflict is caught
-// immediately rather than discovered later when forwarding tool calls to the
-// wrong service.
-func startEmbedded(port string) error {
-	dbPath := embeddedDBPath()
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
-		return fmt.Errorf("create data dir: %w", err)
-	}
-	s, err := store.NewBolt(dbPath)
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
-	}
-	addr := ":" + port
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("port %s is already in use by another process (not pasteai): %w", port, err)
-	}
-	httpSrv := api.NewServer(s, api.Config{
-		Addr:   addr,
-		Logger: log.New(os.Stderr, "[pasteai] ", log.LstdFlags),
-	})
-	go func() {
-		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			fmt.Fprintf(os.Stderr, "[pasteai] embedded server stopped: %v\n", err)
-		}
-	}()
-	return nil
-}
-
-// waitForServer polls until the server responds or the timeout elapses.
-func waitForServer(baseURL string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if isResponding(baseURL) {
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
-}
-
-// embeddedDBPath returns the default path for the embedded database.
-func embeddedDBPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "pasteai.db"
-	}
-	return filepath.Join(home, ".pasteai", "documents.db")
 }
 
 func (s *Server) Run() error {
@@ -401,4 +364,72 @@ func (s *Server) handleUpdate(_ context.Context, req mcpgo.CallToolRequest) (*mc
 		return mcpgo.NewToolResultError("failed to parse server response"), nil
 	}
 	return mcpgo.NewToolResultText(fmt.Sprintf("Document updated.\nURL: %s\nID: %s", result.URL, result.ID)), nil
+}
+
+// ── Embedded server helpers ────────────────────────────────
+
+// isResponding does a quick GET to confirm a pasteai server is already up.
+func isResponding(baseURL string) bool {
+	c := &http.Client{Timeout: 500 * time.Millisecond}
+	resp, err := c.Get(baseURL + "/api/documents")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode < 500
+}
+
+// startEmbedded opens the db, binds the given port, and starts the HTTP server
+// in a goroutine. Binding synchronously means a port conflict is caught
+// immediately rather than discovered later when forwarding tool calls to the
+// wrong service.
+func startEmbedded(port string, logger *log.Logger) error {
+	dbPath := embeddedDBPath()
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
+	boltStore, err := store.NewBolt(dbPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	diskContent, err := store.NewDiskContent(store.DirFromDBPath(dbPath))
+	if err != nil {
+		return fmt.Errorf("open content dir: %w", err)
+	}
+	addr := ":" + port
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("port %s is already in use by another process (not pasteai): %w", port, err)
+	}
+	handler := server.NewServer(boltStore, diskContent, server.Options{
+		Logger: logger,
+	})
+	httpSrv := &http.Server{Handler: handler}
+	go func() {
+		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fmt.Fprintf(os.Stderr, "[pasteai] embedded server stopped: %v\n", err)
+		}
+	}()
+	return nil
+}
+
+// waitForServer polls until the server responds or the timeout elapses.
+func waitForServer(baseURL string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if isResponding(baseURL) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
+// embeddedDBPath returns the default path for the embedded database.
+func embeddedDBPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "pasteai.db"
+	}
+	return filepath.Join(home, ".pasteai", "documents.db")
 }

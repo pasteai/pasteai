@@ -1,11 +1,13 @@
-package api
+package server
 
 import (
+	"compress/gzip"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 type contextKey struct{}
@@ -16,48 +18,6 @@ func ownerFromCtx(ctx context.Context) string {
 	v, _ := ctx.Value(ownerKey).(string)
 	return v
 }
-
-// AuthProvider resolves a request to an owner identity.
-// Implementations: StaticKeyAuth (self-hosted), DynamoKeyAuth (hosted).
-type AuthProvider interface {
-	// Authenticate returns the ownerID for the request, or an error if
-	// credentials were present but invalid. Empty ownerID means anonymous.
-	Authenticate(r *http.Request) (ownerID string, err error)
-}
-
-// StaticKeyAuth is the self-hosted AuthProvider: a fixed map of key → ownerID.
-// Timing-safe comparison prevents key extraction via response timing.
-type StaticKeyAuth struct {
-	entries []struct{ key, ownerID []byte }
-}
-
-func NewStaticKeyAuth(keys map[string]string) *StaticKeyAuth {
-	a := &StaticKeyAuth{}
-	for k, v := range keys {
-		a.entries = append(a.entries, struct{ key, ownerID []byte }{[]byte(k), []byte(v)})
-	}
-	return a
-}
-
-func (a *StaticKeyAuth) Authenticate(r *http.Request) (string, error) {
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return "", nil
-	}
-	token := []byte(strings.TrimPrefix(auth, "Bearer "))
-	for _, e := range a.entries {
-		if subtle.ConstantTimeCompare(token, e.key) == 1 {
-			return string(e.ownerID), nil
-		}
-	}
-	return "", errUnauthorized
-}
-
-var errUnauthorized = &authError{"invalid API key"}
-
-type authError struct{ msg string }
-
-func (e *authError) Error() string { return e.msg }
 
 // authMiddleware enforces authentication using an AuthProvider.
 // GET and HEAD requests always pass through (public read access).
@@ -102,5 +62,33 @@ func securityHeaders(next http.Handler) http.Handler {
 				"img-src 'self' data:; "+
 				"frame-ancestors 'none'")
 		next.ServeHTTP(w, r)
+	})
+}
+
+var gzipPool = sync.Pool{New: func() any { w, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed); return w }}
+
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	w *gzip.Writer
+}
+
+func (g gzipResponseWriter) Write(b []byte) (int, error) { return g.w.Write(b) }
+
+// gzipHandler compresses responses for clients that accept gzip encoding.
+func gzipHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		gz := gzipPool.Get().(*gzip.Writer)
+		gz.Reset(w)
+		defer func() {
+			gz.Close()
+			gzipPool.Put(gz)
+		}()
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Vary", "Accept-Encoding")
+		next.ServeHTTP(gzipResponseWriter{ResponseWriter: w, w: gz}, r)
 	})
 }

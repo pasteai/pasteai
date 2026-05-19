@@ -1,13 +1,6 @@
-package store
+package server
 
-import (
-	"context"
-	"errors"
-	"time"
-)
-
-var ErrNotFound = errors.New("document not found")
-var ErrContentMissing = errors.New("document content file missing")
+import "time"
 
 type Visibility string
 
@@ -17,6 +10,8 @@ const (
 	VisibilityPrivate  Visibility = "private" // reserved for hosted auth tier; not accepted by the v1 API
 )
 
+// Document is the core domain type. Content is populated by the handler from
+// ContentBackend — Store implementations leave it empty.
 type Document struct {
 	ID         string     `json:"id"`
 	Title      string     `json:"title"`
@@ -43,14 +38,4 @@ type ListOptions struct {
 type ListResult struct {
 	Documents []Document
 	NextToken string // empty when there are no more pages
-}
-
-type Store interface {
-	Create(ctx context.Context, doc Document) (*Document, error)
-	List(ctx context.Context, opts ListOptions) (*ListResult, error)
-	Get(ctx context.Context, id string) (*Document, error)
-	// Update overwrites non-empty fields. Empty title or content means "keep existing".
-	Update(ctx context.Context, id, title, content string) (*Document, error)
-	Delete(ctx context.Context, id string) error
-	Close() error
 }

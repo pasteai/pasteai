@@ -1,21 +1,178 @@
-package api_test
+package server_test
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
-	"github.com/pasteai/pasteai/internal/store"
+	"github.com/pasteai/pasteai/server"
 )
 
-func newTestServer(t *testing.T) (*httptest.Server, store.Store) {
+// ── In-memory backends ─────────────────────────────────────
+
+type memStore struct {
+	mu   sync.Mutex
+	docs map[string]*server.Document
+	seq  int
+}
+
+func newMemStore() *memStore { return &memStore{docs: make(map[string]*server.Document)} }
+
+func (m *memStore) Create(_ context.Context, doc server.Document) (*server.Document, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.seq++
+	doc.ID = fmt.Sprintf("test-%d", m.seq)
+	doc.CreatedAt = time.Now()
+	if doc.Visibility == "" {
+		doc.Visibility = server.VisibilityPublic
+	}
+	doc.Content = ""
+	cp := doc
+	m.docs[doc.ID] = &cp
+	return &cp, nil
+}
+
+func (m *memStore) List(_ context.Context, opts server.ListOptions) (*server.ListResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var docs []server.Document
+	for _, d := range m.docs {
+		if opts.OwnerID != "" {
+			if d.OwnerID == opts.OwnerID {
+				docs = append(docs, *d)
+			}
+		} else if d.Visibility == server.VisibilityPublic {
+			docs = append(docs, *d)
+		}
+	}
+	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.After(docs[j].CreatedAt) })
+	return &server.ListResult{Documents: docs}, nil
+}
+
+func (m *memStore) Get(_ context.Context, id string) (*server.Document, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.docs[id]
+	if !ok {
+		return nil, server.ErrNotFound
+	}
+	cp := *d
+	cp.Content = ""
+	return &cp, nil
+}
+
+func (m *memStore) Update(_ context.Context, id, title string) (*server.Document, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.docs[id]
+	if !ok {
+		return nil, server.ErrNotFound
+	}
+	if title != "" {
+		d.Title = title
+	}
+	cp := *d
+	cp.Content = ""
+	return &cp, nil
+}
+
+func (m *memStore) Delete(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.docs[id]; !ok {
+		return server.ErrNotFound
+	}
+	delete(m.docs, id)
+	return nil
+}
+
+func (m *memStore) Close() error { return nil }
+
+type memContent struct {
+	mu      sync.Mutex
+	content map[string][]byte
+}
+
+func newMemContent() *memContent { return &memContent{content: make(map[string][]byte)} }
+
+func (m *memContent) Put(_ context.Context, id string, content []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := make([]byte, len(content))
+	copy(cp, content)
+	m.content[id] = cp
+	return nil
+}
+
+func (m *memContent) Get(_ context.Context, id string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.content[id]
+	if !ok {
+		return nil, server.ErrNotFound
+	}
+	cp := make([]byte, len(c))
+	copy(cp, c)
+	return cp, nil
+}
+
+func (m *memContent) Delete(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.content, id)
+	return nil
+}
+
+// testDB wraps both backends and provides a Create helper that seeds both.
+type testDB struct {
+	store   *memStore
+	content *memContent
+}
+
+func (tb *testDB) Create(ctx context.Context, doc server.Document) (*server.Document, error) {
+	raw := doc.Content
+	created, err := tb.store.Create(ctx, doc)
+	if err != nil {
+		return nil, err
+	}
+	if raw != "" {
+		if err := tb.content.Put(ctx, created.ID, []byte(raw)); err != nil {
+			return nil, err
+		}
+		created.Content = raw
+	}
+	return created, nil
+}
+
+// ── Test helpers ───────────────────────────────────────────
+
+func newTestServer(t *testing.T) (*httptest.Server, *testDB) {
 	t.Helper()
 	return newServerWithBaseURL(t, "")
+}
+
+func newServerWithBaseURL(t *testing.T, baseURL string) (*httptest.Server, *testDB) {
+	t.Helper()
+	db := &testDB{store: newMemStore(), content: newMemContent()}
+	handler := server.NewServer(db.store, db.content, server.Options{
+		BaseURL: baseURL,
+		Logger:  log.New(io.Discard, "", 0),
+	})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts, db
 }
 
 func mustGet(t *testing.T, url string) *http.Response {
@@ -43,6 +200,13 @@ func readBody(t *testing.T, resp *http.Response) string {
 		t.Fatalf("read body: %v", err)
 	}
 	return buf.String()
+}
+
+func decodeJSON(t *testing.T, r io.Reader, v any) {
+	t.Helper()
+	if err := json.NewDecoder(r).Decode(v); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
 }
 
 // ── /api/documents ─────────────────────────────────────────
@@ -102,10 +266,10 @@ func TestListDocuments(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts, s := newTestServer(t)
+			ts, db := newTestServer(t)
 			ctx := context.Background()
 			for _, title := range tt.seedTitles {
-				s.Create(ctx, store.Document{Title: title, Content: "c", Visibility: store.VisibilityPublic})
+				db.Create(ctx, server.Document{Title: title, Content: "c", Visibility: server.VisibilityPublic})
 			}
 			resp := mustGet(t, ts.URL+"/api/documents")
 			defer resp.Body.Close()
@@ -130,8 +294,8 @@ func TestListDocuments(t *testing.T) {
 }
 
 func TestGetDocument(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{Title: "Test", Content: "# body"})
+	ts, db := newTestServer(t)
+	doc, _ := db.Create(context.Background(), server.Document{Title: "Test", Content: "# body"})
 
 	tests := []struct {
 		name        string
@@ -171,10 +335,10 @@ func TestDeleteDocument(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts, s := newTestServer(t)
+			ts, db := newTestServer(t)
 			var id string
 			if tt.createFirst {
-				doc, _ := s.Create(context.Background(), store.Document{Title: "To Delete", Content: "bye"})
+				doc, _ := db.Create(context.Background(), server.Document{Title: "To Delete", Content: "bye"})
 				id = doc.ID
 			} else {
 				id = "does-not-exist"
@@ -238,10 +402,10 @@ func TestUpdateDocument(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts, s := newTestServer(t)
+			ts, db := newTestServer(t)
 			var id string
 			if tt.createFirst {
-				doc, _ := s.Create(context.Background(), store.Document{Title: "Original", Content: "old"})
+				doc, _ := db.Create(context.Background(), server.Document{Title: "Original", Content: "old"})
 				id = doc.ID
 			} else {
 				id = "does-not-exist"
@@ -271,8 +435,8 @@ func TestUpdateDocument(t *testing.T) {
 }
 
 func TestRawDocument(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
+	ts, db := newTestServer(t)
+	doc, _ := db.Create(context.Background(), server.Document{
 		Title:   "Raw Test",
 		Content: "# Hello\n\nworld",
 	})
@@ -336,7 +500,6 @@ func TestHomePageReturnsHTML(t *testing.T) {
 	ts, _ := newTestServer(t)
 	resp := mustGet(t, ts.URL+"/")
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
@@ -347,12 +510,12 @@ func TestHomePageReturnsHTML(t *testing.T) {
 }
 
 func TestHomePageStructure(t *testing.T) {
-	ts, s := newTestServer(t)
-	s.Create(context.Background(), store.Document{
+	ts, db := newTestServer(t)
+	db.Create(context.Background(), server.Document{
 		Title:      "Hello Report",
 		Content:    "body",
 		Author:     "Claude",
-		Visibility: store.VisibilityPublic,
+		Visibility: server.VisibilityPublic,
 	})
 
 	resp := mustGet(t, ts.URL+"/")
@@ -372,7 +535,6 @@ func TestHomePageStructure(t *testing.T) {
 		{"anti-FOUC script", "localStorage.getItem('pasteai-theme')"},
 		{"all 6 themes present", "catppuccin-frappe"},
 	}
-
 	for _, c := range checks {
 		if !strings.Contains(html, c.want) {
 			t.Errorf("home page missing %s: %q not found", c.name, c.want)
@@ -385,7 +547,6 @@ func TestHomePageEmptyState(t *testing.T) {
 	resp := mustGet(t, ts.URL+"/")
 	defer resp.Body.Close()
 	html := readBody(t, resp)
-
 	if !strings.Contains(html, "empty-state") {
 		t.Error("expected empty-state element when no documents")
 	}
@@ -403,12 +564,12 @@ func TestHomePageHero(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts, s := newTestServer(t)
+			ts, db := newTestServer(t)
 			if tt.hasDocs {
-				s.Create(context.Background(), store.Document{
+				db.Create(context.Background(), server.Document{
 					Title:      "Doc",
 					Content:    "content",
-					Visibility: store.VisibilityPublic,
+					Visibility: server.VisibilityPublic,
 				})
 			}
 			resp := mustGet(t, ts.URL+"/")
@@ -497,12 +658,12 @@ func TestDocumentPage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ts, s := newTestServer(t)
+			ts, db := newTestServer(t)
 			title := tt.title
 			if title == "" {
 				title = "Test Doc"
 			}
-			doc, _ := s.Create(context.Background(), store.Document{
+			doc, _ := db.Create(context.Background(), server.Document{
 				Title:   title,
 				Author:  tt.author,
 				Content: tt.content,
@@ -536,13 +697,9 @@ func TestDocumentPageNotFound(t *testing.T) {
 	}
 }
 
-// TestDocumentPageCodeBlockThemeCSS verifies two invariants that together
-// guarantee CSS variables control code block backgrounds per-theme:
-//  1. The injected <style> block has no hardcoded background-color on PreWrapper.
-//  2. style.css uses var(--color-surface-card-strong) on pre.chroma.
 func TestDocumentPageCodeBlockThemeCSS(t *testing.T) {
-	ts, s := newTestServer(t)
-	doc, _ := s.Create(context.Background(), store.Document{
+	ts, db := newTestServer(t)
+	doc, _ := db.Create(context.Background(), server.Document{
 		Title:   "Theme Test",
 		Content: "```go\nfmt.Println(\"hello\")\n```",
 	})
@@ -603,6 +760,41 @@ func TestUnknownPathReturns404(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestDocURLFromBaseURL(t *testing.T) {
+	ts, _ := newServerWithBaseURL(t, "https://pasteai.io")
+	body := `{"title":"Test","content":"body"}`
+	resp, err := http.Post(ts.URL+"/api/documents", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var result map[string]any
+	decodeJSON(t, resp.Body, &result)
+	url, _ := result["url"].(string)
+	if !strings.HasPrefix(url, "https://pasteai.io/d/") {
+		t.Errorf("url = %q, want prefix https://pasteai.io/d/", url)
+	}
+}
+
+func TestDocURLDerivedFromRequest(t *testing.T) {
+	ts, _ := newServerWithBaseURL(t, "")
+	body := `{"title":"Test","content":"body"}`
+	resp, err := http.Post(ts.URL+"/api/documents", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var result map[string]any
+	decodeJSON(t, resp.Body, &result)
+	url, _ := result["url"].(string)
+	if !strings.Contains(url, "/d/") {
+		t.Errorf("url = %q, expected /d/ path", url)
+	}
+	if !strings.HasPrefix(url, "http://127.0.0.1") {
+		t.Errorf("url = %q, expected http://127.0.0.1 prefix", url)
 	}
 }
 
