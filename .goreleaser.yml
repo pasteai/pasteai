@@ -18,11 +18,18 @@ builds:
     goarch:
       - amd64
       - arm64
+      - arm
+    goarm:
+      - "7"
     ldflags:
       - -s -w -X main.version={{.Version}}
     ignore:
       - goos: windows
         goarch: arm64
+      - goos: windows
+        goarch: arm
+      - goos: darwin
+        goarch: arm
 
 archives:
   - id: pasteai
@@ -103,16 +110,28 @@ dockers:
     build_flag_templates:
       - "--platform=linux/arm64"
 
+  - image_templates:
+      - "ghcr.io/pasteai/pasteai:{{ .Tag }}-armv7"
+    goos: linux
+    goarch: arm
+    goarm: "7"
+    dockerfile: Dockerfile.release
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm/v7"
+
 docker_manifests:
   - name_template: "ghcr.io/pasteai/pasteai:{{ .Tag }}"
     image_templates:
       - "ghcr.io/pasteai/pasteai:{{ .Tag }}-amd64"
       - "ghcr.io/pasteai/pasteai:{{ .Tag }}-arm64"
+      - "ghcr.io/pasteai/pasteai:{{ .Tag }}-armv7"
 
   - name_template: "ghcr.io/pasteai/pasteai:latest"
     image_templates:
       - "ghcr.io/pasteai/pasteai:{{ .Tag }}-amd64"
       - "ghcr.io/pasteai/pasteai:{{ .Tag }}-arm64"
+      - "ghcr.io/pasteai/pasteai:{{ .Tag }}-armv7"
 
 changelog:
   disable: true  # Release Please manages the changelog
