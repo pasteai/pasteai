@@ -2,14 +2,17 @@ package api
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pasteai/pasteai/internal/renderer"
@@ -52,6 +55,7 @@ func NewServer(s store.Store, cfg Config) *http.Server {
 	if cfg.AuthProvider != nil {
 		handler = authMiddleware(cfg.AuthProvider, srv.mux)
 	}
+	handler = gzipHandler(handler)
 	handler = securityHeaders(handler)
 
 	return &http.Server{
@@ -79,7 +83,7 @@ func (s *Server) registerRoutes() {
 	if err != nil {
 		panic("web.FS missing static directory: " + err.Error())
 	}
-	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFS)))
+	s.mux.Handle("GET /static/", http.StripPrefix("/static/", staticCacheHandler(http.FileServerFS(staticFS))))
 
 	s.mux.HandleFunc("GET /{$}", s.handleHome)
 	s.mux.HandleFunc("GET /d/{id}", s.handleViewDocument)
@@ -435,4 +439,42 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// staticCacheHandler wraps a handler serving embedded static files with a
+// one-year Cache-Control header. Files are content-addressed by the embed
+// hash so stale caches are never an issue.
+func staticCacheHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		next.ServeHTTP(w, r)
+	})
+}
+
+var gzipPool = sync.Pool{New: func() any { w, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed); return w }}
+
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	w *gzip.Writer
+}
+
+func (g gzipResponseWriter) Write(b []byte) (int, error) { return g.w.Write(b) }
+
+// gzipHandler compresses responses for clients that accept gzip encoding.
+func gzipHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		gz := gzipPool.Get().(*gzip.Writer)
+		gz.Reset(w)
+		defer func() {
+			gz.Close()
+			gzipPool.Put(gz)
+		}()
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Vary", "Accept-Encoding")
+		next.ServeHTTP(gzipResponseWriter{ResponseWriter: w, w: gz}, r)
+	})
 }
