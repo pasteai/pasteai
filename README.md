@@ -170,6 +170,20 @@ To read documents from your phone or another machine, use Tailscale. Start `past
 
 **`list_documents`** — returns recent public documents.
 
+**`get_document`** — retrieve a document by ID, including its full markdown content.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `id` | yes | Document ID |
+
+**`update_document`** — update the title or content of an existing document.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `id` | yes | Document ID |
+| `title` | no | New title (omit to keep existing) |
+| `content` | no | New markdown content (omit to keep existing) |
+
 ---
 
 ## REST API
@@ -178,7 +192,10 @@ To read documents from your phone or another machine, use Tailscale. Start `past
 |---|---|---|
 | `POST` | `/api/documents` | Create a document |
 | `GET` | `/api/documents` | List recent public documents |
-| `GET` | `/api/documents/{id}` | Get a document |
+| `GET` | `/api/documents/{id}` | Get a document (with content) |
+| `PUT` | `/api/documents/{id}` | Update title or content |
+| `DELETE` | `/api/documents/{id}` | Delete a document |
+| `GET` | `/d/{id}/raw` | Raw markdown source |
 
 ```sh
 curl -X POST http://localhost:8080/api/documents \
