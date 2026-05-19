@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"path/filepath"
 	"time"
 
@@ -120,6 +121,7 @@ func (s *BoltStore) List(_ context.Context, opts server.ListOptions) (*server.Li
 			}
 			var doc server.Document
 			if err := json.Unmarshal(data, &doc); err != nil {
+				log.Printf("bolt: skipping corrupt document %q: %v", id, err)
 				continue
 			}
 			visible := false

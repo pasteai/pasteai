@@ -123,6 +123,77 @@ func TestServerFileOfflineReadable(t *testing.T) {
 	}
 }
 
+func TestServerUpdateDocument(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+	addr, _ := startServer(t)
+
+	id := postDoc(t, addr, "Original Title", "original content")
+
+	body, _ := json.Marshal(map[string]string{"title": "Updated Title", "content": "updated content"})
+	req, _ := http.NewRequest(http.MethodPut, fmt.Sprintf("http://%s/api/documents/%s", addr, id), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("update: expected 200, got %d", resp.StatusCode)
+	}
+	var result struct {
+		Title   string `json:"title"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Title != "Updated Title" {
+		t.Errorf("title = %q, want Updated Title", result.Title)
+	}
+	if result.Content != "updated content" {
+		t.Errorf("content = %q, want updated content", result.Content)
+	}
+}
+
+func TestServerAPIKeyRequired(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+	addr := startServerWithKey(t, "my-secret-key")
+
+	body, _ := json.Marshal(map[string]string{"title": "test", "content": "body"})
+	resp, err := http.Post("http://"+addr+"/api/documents", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 without API key", resp.StatusCode)
+	}
+}
+
+func TestServerAPIKeyAccepted(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+	addr := startServerWithKey(t, "my-secret-key")
+
+	body, _ := json.Marshal(map[string]string{"title": "test", "content": "body"})
+	req, _ := http.NewRequest(http.MethodPost, "http://"+addr+"/api/documents", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer my-secret-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("status = %d, want 201 with valid API key", resp.StatusCode)
+	}
+}
+
 func TestServerConcurrentCreates(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")

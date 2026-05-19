@@ -237,9 +237,11 @@ func (s *srv) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 		doc.Content = req.Content
 	} else {
 		raw, err := s.content.Get(r.Context(), id)
-		if err == nil {
-			doc.Content = string(raw)
+		if err != nil {
+			s.serverError(w, err)
+			return
 		}
+		doc.Content = string(raw)
 	}
 	writeJSON(w, http.StatusOK, documentDetailResponse{
 		documentResponse: s.toResponse(r, *doc),
@@ -331,7 +333,9 @@ func (s *srv) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.content.Put(r.Context(), doc.ID, []byte(req.Content)); err != nil {
 		// best-effort rollback — content write failed after metadata was stored
-		s.store.Delete(r.Context(), doc.ID)
+		if rerr := s.store.Delete(r.Context(), doc.ID); rerr != nil {
+			s.logger.Printf("rollback failed after content.Put error (id=%s): %v", doc.ID, rerr)
+		}
 		s.serverError(w, err)
 		return
 	}

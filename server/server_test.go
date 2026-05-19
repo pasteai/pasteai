@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pasteai/pasteai/server"
+	"github.com/pasteai/pasteai/store"
 )
 
 // ── In-memory backends ─────────────────────────────────────
@@ -156,6 +159,45 @@ func (tb *testDB) Create(ctx context.Context, doc server.Document) (*server.Docu
 	return created, nil
 }
 
+// ── Error injection backends ───────────────────────────────
+
+var errInjected = errors.New("injected error")
+
+type alwaysFailStore struct{}
+
+func (*alwaysFailStore) Create(_ context.Context, _ server.Document) (*server.Document, error) {
+	return nil, errInjected
+}
+func (*alwaysFailStore) List(_ context.Context, _ server.ListOptions) (*server.ListResult, error) {
+	return nil, errInjected
+}
+func (*alwaysFailStore) Get(_ context.Context, _ string) (*server.Document, error) {
+	return nil, errInjected
+}
+func (*alwaysFailStore) Update(_ context.Context, _, _ string) (*server.Document, error) {
+	return nil, errInjected
+}
+func (*alwaysFailStore) Delete(_ context.Context, _ string) error { return errInjected }
+func (*alwaysFailStore) Close() error                             { return nil }
+
+type alwaysFailContent struct{}
+
+func (*alwaysFailContent) Put(_ context.Context, _ string, _ []byte) error { return errInjected }
+func (*alwaysFailContent) Get(_ context.Context, _ string) ([]byte, error) {
+	return nil, errInjected
+}
+func (*alwaysFailContent) Delete(_ context.Context, _ string) error { return errInjected }
+
+// failPutContent fails only on Put; Get/Delete delegate to the embedded memContent.
+type failPutContent struct{ *memContent }
+
+func (*failPutContent) Put(_ context.Context, _ string, _ []byte) error { return errInjected }
+
+// failDeleteStore fails only on Delete; all other operations delegate to embedded memStore.
+type failDeleteStore struct{ *memStore }
+
+func (*failDeleteStore) Delete(_ context.Context, _ string) error { return errInjected }
+
 // ── Test helpers ───────────────────────────────────────────
 
 func newTestServer(t *testing.T) (*httptest.Server, *testDB) {
@@ -169,6 +211,26 @@ func newServerWithBaseURL(t *testing.T, baseURL string) (*httptest.Server, *test
 	handler := server.NewServer(db.store, db.content, server.Options{
 		BaseURL: baseURL,
 		Logger:  log.New(io.Discard, "", 0),
+	})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts, db
+}
+
+func newServerWith(t *testing.T, st server.Store, ct server.ContentBackend) *httptest.Server {
+	t.Helper()
+	handler := server.NewServer(st, ct, server.Options{Logger: log.New(io.Discard, "", 0)})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func newServerWithAuth(t *testing.T, apiKey string) (*httptest.Server, *testDB) {
+	t.Helper()
+	db := &testDB{store: newMemStore(), content: newMemContent()}
+	handler := server.NewServer(db.store, db.content, server.Options{
+		Logger:       log.New(io.Discard, "", 0),
+		AuthProvider: server.NewStaticKeyAuth(map[string]string{apiKey: "owner"}),
 	})
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
@@ -226,6 +288,10 @@ func TestCreateDocument(t *testing.T) {
 		{name: "missing title", body: `{"content":"body"}`, wantStatus: http.StatusBadRequest},
 		{name: "missing content", body: `{"title":"title"}`, wantStatus: http.StatusBadRequest},
 		{name: "invalid JSON", body: `not-json`, wantStatus: http.StatusBadRequest},
+		{name: "title too long", body: `{"title":"` + strings.Repeat("x", 501) + `","content":"c"}`, wantStatus: http.StatusBadRequest},
+		{name: "author too long", body: `{"title":"t","content":"c","author":"` + strings.Repeat("a", 201) + `"}`, wantStatus: http.StatusBadRequest},
+		{name: "invalid visibility", body: `{"title":"t","content":"c","visibility":"secret"}`, wantStatus: http.StatusBadRequest},
+		{name: "unlisted visibility", body: `{"title":"t","content":"c","visibility":"unlisted"}`, wantStatus: http.StatusCreated},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -246,7 +312,7 @@ func TestCreateDocument(t *testing.T) {
 				if result["content"] == nil {
 					t.Error("expected content in response")
 				}
-				if result["title"] != "My Report" {
+				if tt.name == "valid" && result["title"] != "My Report" {
 					t.Errorf("title = %v, want My Report", result["title"])
 				}
 			}
@@ -795,6 +861,313 @@ func TestDocURLDerivedFromRequest(t *testing.T) {
 	}
 	if !strings.HasPrefix(url, "http://127.0.0.1") {
 		t.Errorf("url = %q, expected http://127.0.0.1 prefix", url)
+	}
+}
+
+// ── Error path tests ───────────────────────────────────────
+
+func TestStoreListError(t *testing.T) {
+	ts := newServerWith(t, &alwaysFailStore{}, newMemContent())
+	for _, path := range []string{"/api/documents", "/"} {
+		resp := mustGet(t, ts.URL+path)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("GET %s: status = %d, want 500", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestStoreGetError(t *testing.T) {
+	ts := newServerWith(t, &alwaysFailStore{}, newMemContent())
+	for _, path := range []string{"/api/documents/x", "/d/x", "/d/x/raw"} {
+		resp := mustGet(t, ts.URL+path)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("GET %s: status = %d, want 500", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestGetDocumentContentMissing(t *testing.T) {
+	ms := newMemStore()
+	doc, _ := ms.Create(context.Background(), server.Document{Title: "test"})
+	ts := newServerWith(t, ms, newMemContent()) // content not stored → ErrNotFound
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for missing content", resp.StatusCode)
+	}
+}
+
+func TestGetDocumentContentError(t *testing.T) {
+	ms := newMemStore()
+	doc, _ := ms.Create(context.Background(), server.Document{Title: "test"})
+	ts := newServerWith(t, ms, &alwaysFailContent{})
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 for content error", resp.StatusCode)
+	}
+}
+
+func TestViewRawContentError(t *testing.T) {
+	ms := newMemStore()
+	doc, _ := ms.Create(context.Background(), server.Document{Title: "test"})
+	ts := newServerWith(t, ms, &alwaysFailContent{})
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s/raw", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 for content error", resp.StatusCode)
+	}
+}
+
+func TestViewDocumentContentError(t *testing.T) {
+	ms := newMemStore()
+	doc, _ := ms.Create(context.Background(), server.Document{Title: "test"})
+	ts := newServerWith(t, ms, &alwaysFailContent{})
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 for content error", resp.StatusCode)
+	}
+}
+
+func TestCreateDocumentStoreError(t *testing.T) {
+	ts := newServerWith(t, &alwaysFailStore{}, newMemContent())
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json", `{"title":"x","content":"y"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestCreateDocumentRollback(t *testing.T) {
+	ms := newMemStore()
+	ts := newServerWith(t, ms, &failPutContent{newMemContent()})
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json", `{"title":"x","content":"y"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 after content failure", resp.StatusCode)
+	}
+	result, _ := ms.List(context.Background(), server.ListOptions{Limit: 10})
+	if len(result.Documents) != 0 {
+		t.Errorf("store rollback: got %d docs, want 0", len(result.Documents))
+	}
+}
+
+func TestUpdateDocumentStoreError(t *testing.T) {
+	ts := newServerWith(t, &alwaysFailStore{}, newMemContent())
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/documents/any",
+		strings.NewReader(`{"title":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestUpdateDocumentContentPutError(t *testing.T) {
+	ms := newMemStore()
+	doc, _ := ms.Create(context.Background(), server.Document{Title: "test"})
+	ts := newServerWith(t, ms, &failPutContent{newMemContent()})
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID),
+		strings.NewReader(`{"title":"x","content":"new"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestUpdateDocumentTitleOnly(t *testing.T) {
+	ts, db := newTestServer(t)
+	doc, _ := db.Create(context.Background(), server.Document{Title: "Original", Content: "original content"})
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID),
+		strings.NewReader(`{"title":"New Title"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	var result map[string]any
+	decodeJSON(t, resp.Body, &result)
+	if result["title"] != "New Title" {
+		t.Errorf("title = %v, want New Title", result["title"])
+	}
+	if result["content"] != "original content" {
+		t.Errorf("content = %v, want original content", result["content"])
+	}
+}
+
+func TestDeleteDocumentStoreError(t *testing.T) {
+	ts := newServerWith(t, &alwaysFailStore{}, newMemContent())
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/documents/any", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
+	}
+}
+
+func TestCreateDocumentRollbackFailure(t *testing.T) {
+	var logBuf bytes.Buffer
+	fds := &failDeleteStore{newMemStore()}
+	handler := server.NewServer(fds, &failPutContent{newMemContent()}, server.Options{
+		Logger: log.New(&logBuf, "", 0),
+	})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json", `{"title":"x","content":"y"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
+	}
+	if !strings.Contains(logBuf.String(), "rollback") {
+		t.Errorf("expected rollback failure in log, got: %s", logBuf.String())
+	}
+}
+
+func TestUpdateDocumentContentGetError(t *testing.T) {
+	ms := newMemStore()
+	doc, _ := ms.Create(context.Background(), server.Document{Title: "test"})
+	// content not seeded — content.Get returns ErrNotFound
+	ts := newServerWith(t, ms, newMemContent())
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID),
+		strings.NewReader(`{"title":"New Title"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 when content cannot be fetched", resp.StatusCode)
+	}
+}
+
+func TestServerWithRealStore(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	boltStore, err := store.NewBolt(dbPath)
+	if err != nil {
+		t.Fatalf("NewBolt: %v", err)
+	}
+	t.Cleanup(func() { boltStore.Close() })
+
+	diskContent, err := store.NewDiskContent(store.DirFromDBPath(dbPath))
+	if err != nil {
+		t.Fatalf("NewDiskContent: %v", err)
+	}
+
+	handler := server.NewServer(boltStore, diskContent, server.Options{
+		Logger: log.New(io.Discard, "", 0),
+	})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+
+	// Create
+	body := `{"title":"Real Test","content":"# Hello\n\nWorld","author":"Go test"}`
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json", body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: status = %d", resp.StatusCode)
+	}
+	var created map[string]any
+	decodeJSON(t, resp.Body, &created)
+	id, _ := created["id"].(string)
+	if id == "" {
+		t.Fatal("expected non-empty id")
+	}
+
+	// Get — verifies BoltStore returns empty Content and handler fetches from DiskContent
+	resp2 := mustGet(t, fmt.Sprintf("%s/api/documents/%s", ts.URL, id))
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("get: status = %d", resp2.StatusCode)
+	}
+	var got map[string]any
+	decodeJSON(t, resp2.Body, &got)
+	if got["title"] != "Real Test" {
+		t.Errorf("title = %v, want Real Test", got["title"])
+	}
+	if got["content"] != "# Hello\n\nWorld" {
+		t.Errorf("content = %v, want '# Hello\\n\\nWorld'", got["content"])
+	}
+
+	// Update
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, id),
+		strings.NewReader(`{"title":"Updated","content":"new body"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp3, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Fatalf("update: status = %d", resp3.StatusCode)
+	}
+
+	// Delete
+	req2, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/documents/%s", ts.URL, id), nil)
+	resp4, _ := http.DefaultClient.Do(req2)
+	resp4.Body.Close()
+	if resp4.StatusCode != http.StatusNoContent {
+		t.Errorf("delete: status = %d, want 204", resp4.StatusCode)
+	}
+
+	// Get after delete — DiskContent file should be gone
+	resp5 := mustGet(t, fmt.Sprintf("%s/api/documents/%s", ts.URL, id))
+	resp5.Body.Close()
+	if resp5.StatusCode != http.StatusNotFound {
+		t.Errorf("get after delete: status = %d, want 404", resp5.StatusCode)
+	}
+}
+
+func TestShowDeleteWithAuth(t *testing.T) {
+	ts, db := newServerWithAuth(t, "secret")
+	doc, _ := db.Create(context.Background(), server.Document{Title: "Auth Test", Content: "body"})
+	docURL := fmt.Sprintf("%s/d/%s", ts.URL, doc.ID)
+
+	// Without auth: delete button must be absent (ShowDelete = false)
+	resp := mustGet(t, docURL)
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+	if strings.Contains(html, `class="delete-btn"`) {
+		t.Error("delete button must be absent without auth")
+	}
+
+	// With valid auth: delete button must be present (ShowDelete = true)
+	req, _ := http.NewRequest(http.MethodGet, docURL, nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	html2 := readBody(t, resp2)
+	if !strings.Contains(html2, `class="delete-btn"`) {
+		t.Error("delete button must be present with valid auth")
 	}
 }
 

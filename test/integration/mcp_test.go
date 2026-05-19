@@ -229,6 +229,103 @@ func TestMCPPublishMissingParams(t *testing.T) {
 	}
 }
 
+func TestMCPGetDocument(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+	addr, _ := startServer(t)
+	p := startMCP(t, "http://"+addr)
+	p.initialize(t)
+
+	p.callTool(t, 2, "publish_document", map[string]any{
+		"title":   "Get Test",
+		"content": "# Hello\n\nWorld",
+	})
+
+	// list to get the ID
+	listTR := p.callTool(t, 3, "list_documents", map[string]any{})
+	text := listTR.Content[0].Text
+	docID := ""
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "ID: ") {
+			start := strings.Index(line, "ID: ") + 4
+			end := strings.Index(line[start:], ",")
+			if end == -1 {
+				end = strings.Index(line[start:], ")")
+			}
+			if end != -1 {
+				docID = line[start : start+end]
+			}
+		}
+	}
+	if docID == "" {
+		t.Fatal("could not parse ID from list output")
+	}
+
+	tr := p.callTool(t, 4, "get_document", map[string]any{"id": docID})
+	if tr.IsError {
+		t.Fatalf("get_document failed: %s", tr.Content[0].Text)
+	}
+	got := tr.Content[0].Text
+	if !strings.Contains(got, "Get Test") {
+		t.Errorf("title not in get result: %s", got)
+	}
+	if !strings.Contains(got, "# Hello") {
+		t.Errorf("content not in get result: %s", got)
+	}
+}
+
+func TestMCPUpdateDocument(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+	addr, _ := startServer(t)
+	p := startMCP(t, "http://"+addr)
+	p.initialize(t)
+
+	tr := p.callTool(t, 2, "publish_document", map[string]any{
+		"title":   "Original",
+		"content": "original content",
+	})
+	if tr.IsError {
+		t.Fatalf("publish failed: %s", tr.Content[0].Text)
+	}
+	docID := ""
+	for _, line := range strings.Split(tr.Content[0].Text, "\n") {
+		if strings.HasPrefix(line, "ID: ") {
+			docID = strings.TrimPrefix(line, "ID: ")
+		}
+	}
+	if docID == "" {
+		t.Fatal("could not parse ID from publish output")
+	}
+
+	tr2 := p.callTool(t, 3, "update_document", map[string]any{
+		"id":      docID,
+		"title":   "Updated Title",
+		"content": "updated content",
+	})
+	if tr2.IsError {
+		t.Fatalf("update_document failed: %s", tr2.Content[0].Text)
+	}
+	if !strings.Contains(tr2.Content[0].Text, "updated") {
+		t.Errorf("expected 'updated' in result: %s", tr2.Content[0].Text)
+	}
+
+	// Verify via get_document
+	tr3 := p.callTool(t, 4, "get_document", map[string]any{"id": docID})
+	if tr3.IsError {
+		t.Fatalf("get after update failed: %s", tr3.Content[0].Text)
+	}
+	got := tr3.Content[0].Text
+	if !strings.Contains(got, "Updated Title") {
+		t.Errorf("updated title not found: %s", got)
+	}
+	if !strings.Contains(got, "updated content") {
+		t.Errorf("updated content not found: %s", got)
+	}
+}
+
 func TestMCPServerUnreachable(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")

@@ -62,3 +62,10 @@ func TestOwnerFromCtxEmpty(t *testing.T) {
 		t.Errorf("expected empty owner from bare context, got %q", owner)
 	}
 }
+
+func TestAuthErrorMessage(t *testing.T) {
+	err := errUnauthorized
+	if err.Error() != "invalid API key" {
+		t.Errorf("Error() = %q, want %q", err.Error(), "invalid API key")
+	}
+}

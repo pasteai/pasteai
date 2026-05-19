@@ -1,6 +1,8 @@
 # Binary (root-level only — does not match cmd/pasteai/)
 /pasteai
 
+docs/specs
+
 # Database files
 *.db
 *.bolt

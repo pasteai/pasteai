@@ -45,6 +45,7 @@ type Server struct {
 	apiKey     string
 	logger     *log.Logger
 	httpClient *http.Client
+	cleanup    func() // called on Run return; non-nil only for embedded servers
 }
 
 // New creates a new MCP Server. If opts.URL is empty and no pasteai server is
@@ -74,8 +75,11 @@ func New(opts Options) *Server {
 	u.Path, u.RawQuery, u.Fragment = "", "", ""
 	baseURL := u.String()
 
+	var cleanup func()
 	if embedded && !isResponding(baseURL) {
-		if err := startEmbedded(embeddedPort, logger); err != nil {
+		var err error
+		cleanup, err = startEmbedded(embeddedPort, logger)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "[pasteai-mcp] failed to start embedded server: %v\n", err)
 			os.Exit(1)
 		}
@@ -95,10 +99,14 @@ func New(opts Options) *Server {
 		apiKey:     opts.APIKey,
 		logger:     logger,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
+		cleanup:    cleanup,
 	}
 }
 
 func (s *Server) Run() error {
+	if s.cleanup != nil {
+		defer s.cleanup()
+	}
 	srv := mcpserver.NewMCPServer("pasteai", "1.0.0",
 		mcpserver.WithToolCapabilities(false),
 	)
@@ -383,23 +391,25 @@ func isResponding(baseURL string) bool {
 // in a goroutine. Binding synchronously means a port conflict is caught
 // immediately rather than discovered later when forwarding tool calls to the
 // wrong service.
-func startEmbedded(port string, logger *log.Logger) error {
+func startEmbedded(port string, logger *log.Logger) (func(), error) {
 	dbPath := embeddedDBPath()
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
-		return fmt.Errorf("create data dir: %w", err)
+		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 	boltStore, err := store.NewBolt(dbPath)
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return nil, fmt.Errorf("open database: %w", err)
 	}
 	diskContent, err := store.NewDiskContent(store.DirFromDBPath(dbPath))
 	if err != nil {
-		return fmt.Errorf("open content dir: %w", err)
+		boltStore.Close()
+		return nil, fmt.Errorf("open content dir: %w", err)
 	}
 	addr := ":" + port
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("port %s is already in use by another process (not pasteai): %w", port, err)
+		boltStore.Close()
+		return nil, fmt.Errorf("port %s is already in use by another process (not pasteai): %w", port, err)
 	}
 	handler := server.NewServer(boltStore, diskContent, server.Options{
 		Logger: logger,
@@ -410,7 +420,12 @@ func startEmbedded(port string, logger *log.Logger) error {
 			fmt.Fprintf(os.Stderr, "[pasteai] embedded server stopped: %v\n", err)
 		}
 	}()
-	return nil
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		httpSrv.Shutdown(ctx)
+		boltStore.Close()
+	}, nil
 }
 
 // waitForServer polls until the server responds or the timeout elapses.
