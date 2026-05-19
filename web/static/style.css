@@ -1,5 +1,9 @@
 /* ── Theme Variables ─────────────────────────────────────── */
 
+:root {
+  color-scheme: light dark;
+}
+
 [data-theme="light"] {
   --color-bg:                  #fcfeff;
   --color-surface:             rgba(252,254,255,0.96);
@@ -920,6 +924,8 @@ a:hover {
   margin: 1.25em 0;
   font-size: 0.875em;
   line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .markdown-body pre code {
