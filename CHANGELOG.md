@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.7](https://github.com/pasteai/pasteai/compare/v0.0.6...v0.0.7) (2026-05-19)
+
+
+### Features
+
+* Refactor into library to allow for extention ([fbf9f8e](https://github.com/pasteai/pasteai/commit/fbf9f8e8a76cacc304d624574edb6f563236b6e8))
+
+
+### Bug Fixes
+
+* Fix colours when using 3p dark theme plugins ([79f1bed](https://github.com/pasteai/pasteai/commit/79f1bedfd51350166a89a73cae22c2491fe004c4))
+
 ## [0.0.6](https://github.com/pasteai/pasteai/compare/v0.0.5...v0.0.6) (2026-05-18)
 
 
