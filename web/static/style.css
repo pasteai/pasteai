@@ -328,6 +328,30 @@ a:hover {
 }
 .nav-link:hover { color: var(--color-text); text-decoration: none; }
 
+/* Reset button-as-nav-link (e.g. sign out form button) */
+button.nav-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.nav-user {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.nav-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--color-border);
+  display: block;
+}
+
 /* ── Theme Picker ────────────────────────────────────────── */
 
 .theme-picker {
