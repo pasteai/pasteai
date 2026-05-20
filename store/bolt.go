@@ -198,6 +198,36 @@ func (s *BoltStore) Update(_ context.Context, id, title string) (*server.Documen
 	return &doc, nil
 }
 
+func (s *BoltStore) UpdateVisibility(_ context.Context, id string, vis server.Visibility) (*server.Document, error) {
+	var doc server.Document
+	if err := s.db.View(func(tx *bolt.Tx) error {
+		data := tx.Bucket(bucketDocs).Get([]byte(id))
+		if data == nil {
+			return server.ErrNotFound
+		}
+		return json.Unmarshal(data, &doc)
+	}); err != nil {
+		return nil, err
+	}
+
+	doc.Visibility = vis
+
+	meta := doc
+	meta.Content = ""
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketDocs).Put([]byte(id), data)
+	}); err != nil {
+		return nil, err
+	}
+
+	doc.Content = ""
+	return &doc, nil
+}
+
 func (s *BoltStore) Delete(_ context.Context, id string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		docBucket := tx.Bucket(bucketDocs)

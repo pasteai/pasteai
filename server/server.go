@@ -17,16 +17,17 @@ import (
 )
 
 type srv struct {
-	mux          *http.ServeMux
-	store        Store
-	content      ContentBackend
-	homeTmpl     *template.Template
-	documentTmpl *template.Template
-	errorTmpl    *template.Template
-	baseURL      string
-	logger       *log.Logger
-	chromaCSS    template.CSS
-	authProvider AuthProvider
+	mux               *http.ServeMux
+	store             Store
+	content           ContentBackend
+	homeTmpl          *template.Template
+	documentTmpl      *template.Template
+	errorTmpl         *template.Template
+	baseURL           string
+	logger            *log.Logger
+	chromaCSS         template.CSS
+	authProvider      AuthProvider
+	defaultVisibility Visibility
 }
 
 // NewServer constructs the PasteAI HTTP handler. The caller is responsible for
@@ -38,13 +39,14 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 	}
 
 	s := &srv{
-		mux:          http.NewServeMux(),
-		store:        store,
-		content:      content,
-		baseURL:      opts.BaseURL,
-		logger:       logger,
-		chromaCSS:    renderer.ThemeCSS(),
-		authProvider: opts.AuthProvider,
+		mux:               http.NewServeMux(),
+		store:             store,
+		content:           content,
+		baseURL:           opts.BaseURL,
+		logger:            logger,
+		chromaCSS:         renderer.ThemeCSS(),
+		authProvider:      opts.AuthProvider,
+		defaultVisibility: opts.DefaultVisibility,
 	}
 	s.loadTemplates()
 	s.registerRoutes(opts.HomeHandler)
@@ -148,15 +150,16 @@ func (s *srv) handleViewRaw(w http.ResponseWriter, r *http.Request) {
 
 type documentData struct {
 	baseData
-	Document     Document
-	RenderedHTML template.HTML
-	Headings     []renderer.Heading
-	ChromaCSS    template.CSS
-	Description  string
-	PageURL      string
-	OGImageURL   string
-	RawURL       string
-	ShowDelete   bool
+	Document              Document
+	RenderedHTML          template.HTML
+	Headings              []renderer.Heading
+	ChromaCSS             template.CSS
+	Description           string
+	PageURL               string
+	OGImageURL            string
+	RawURL                string
+	ShowDelete            bool
+	ShowVisibilityToggle  bool
 }
 
 func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
@@ -183,16 +186,18 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ownerID := ownerFromCtx(r.Context())
 	s.renderWith(w, s.documentTmpl, documentData{
-		Document:     *doc,
-		RenderedHTML: result.HTML,
-		Headings:     result.Headings,
-		ChromaCSS:    s.chromaCSS,
-		Description:  docDescription(doc.Content),
-		PageURL:      s.baseURL + "/d/" + doc.ID,
-		OGImageURL:   s.baseURL + "/static/og-image.svg",
-		RawURL:       "/d/" + doc.ID + "/raw",
-		ShowDelete:   s.isAuthenticated(r),
+		Document:             *doc,
+		RenderedHTML:         result.HTML,
+		Headings:             result.Headings,
+		ChromaCSS:            s.chromaCSS,
+		Description:          docDescription(doc.Content),
+		PageURL:              s.baseURL + "/d/" + doc.ID,
+		OGImageURL:           s.baseURL + "/static/og-image.svg",
+		RawURL:               "/d/" + doc.ID + "/raw",
+		ShowDelete:           s.isAuthenticated(r),
+		ShowVisibilityToggle: ownerID != "" && doc.OwnerID != "" && ownerID == doc.OwnerID,
 	})
 }
 
@@ -222,8 +227,9 @@ func docDescription(content string) string {
 // ── API handlers ───────────────────────────────────────────
 
 type updateRequest struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
+	Title      string `json:"title"`
+	Content    string `json:"content"`
+	Visibility string `json:"visibility"`
 }
 
 func (s *srv) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
@@ -233,8 +239,8 @@ func (s *srv) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if req.Title == "" && req.Content == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title or content required"})
+	if req.Title == "" && req.Content == "" && req.Visibility == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title, content, or visibility required"})
 		return
 	}
 	doc, err := s.store.Update(r.Context(), id, req.Title)
@@ -245,6 +251,24 @@ func (s *srv) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 		}
 		s.serverError(w, err)
 		return
+	}
+	if req.Visibility != "" {
+		vis := Visibility(req.Visibility)
+		switch vis {
+		case VisibilityPublic, VisibilityUnlisted, VisibilityPrivate:
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "visibility must be public, unlisted, or private"})
+			return
+		}
+		doc, err = s.store.UpdateVisibility(r.Context(), id, vis)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+				return
+			}
+			s.serverError(w, err)
+			return
+		}
 	}
 	if req.Content != "" {
 		if err := s.content.Put(r.Context(), id, []byte(req.Content)); err != nil {
@@ -329,8 +353,14 @@ func (s *srv) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 
 	vis := Visibility(req.Visibility)
 	switch vis {
-	case "", VisibilityPublic:
-		vis = VisibilityPublic
+	case "":
+		if ownerFromCtx(r.Context()) != "" && s.defaultVisibility != "" {
+			vis = s.defaultVisibility
+		} else {
+			vis = VisibilityPublic
+		}
+	case VisibilityPublic:
+		// explicit public — always allowed
 	case VisibilityUnlisted:
 		// valid
 	case VisibilityPrivate:

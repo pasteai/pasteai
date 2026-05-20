@@ -55,7 +55,16 @@
       </article>
       <footer class="doc-footer">
         <span>Published with <a href="https://github.com/pasteai/pasteai" target="_blank" rel="noopener">PasteAI</a> &middot; <a href="{{.RawURL}}">View source</a></span>
-        {{if .ShowDelete}}<button class="delete-btn" onclick="deleteDoc('{{.Document.ID}}')">Delete</button>{{end}}
+        <div class="doc-footer-actions">
+          {{if .ShowVisibilityToggle}}
+            {{if eq .Document.Visibility "private"}}
+              <button class="visibility-btn" onclick="setVisibility('{{.Document.ID}}', 'public')">Make public</button>
+            {{else}}
+              <button class="visibility-btn" onclick="setVisibility('{{.Document.ID}}', 'private')">Make private</button>
+            {{end}}
+          {{end}}
+          {{if .ShowDelete}}<button class="delete-btn" onclick="deleteDoc('{{.Document.ID}}')">Delete</button>{{end}}
+        </div>
       </footer>
     </div>
   </div>
@@ -129,6 +138,18 @@
         })
         .catch(function() { closeDeleteModal(); alert('Delete failed - try again.'); });
     });
+  }
+
+  // ── Visibility toggle ─────────────────────────────────────
+  function setVisibility(id, vis) {
+    fetch('/api/documents/' + id, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({visibility: vis})
+    }).then(function(r) {
+      if (r.ok) { window.location.reload(); }
+      else { alert('Failed to update visibility — try again.'); }
+    }).catch(function() { alert('Failed to update visibility — try again.'); });
   }
 
   // ── Mobile TOC ────────────────────────────────────────────

@@ -17,6 +17,7 @@ type Store interface {
 	Get(ctx context.Context, id string) (*Document, error)
 	// Update overwrites non-empty title only. Content is managed by ContentBackend.
 	Update(ctx context.Context, id, title string) (*Document, error)
+	UpdateVisibility(ctx context.Context, id string, vis Visibility) (*Document, error)
 	Delete(ctx context.Context, id string) error
 	Close() error
 }

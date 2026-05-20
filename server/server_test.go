@@ -91,6 +91,19 @@ func (m *memStore) Update(_ context.Context, id, title string) (*server.Document
 	return &cp, nil
 }
 
+func (m *memStore) UpdateVisibility(_ context.Context, id string, vis server.Visibility) (*server.Document, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.docs[id]
+	if !ok {
+		return nil, server.ErrNotFound
+	}
+	d.Visibility = vis
+	cp := *d
+	cp.Content = ""
+	return &cp, nil
+}
+
 func (m *memStore) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -175,6 +188,9 @@ func (*alwaysFailStore) Get(_ context.Context, _ string) (*server.Document, erro
 	return nil, errInjected
 }
 func (*alwaysFailStore) Update(_ context.Context, _, _ string) (*server.Document, error) {
+	return nil, errInjected
+}
+func (*alwaysFailStore) UpdateVisibility(_ context.Context, _ string, _ server.Visibility) (*server.Document, error) {
 	return nil, errInjected
 }
 func (*alwaysFailStore) Delete(_ context.Context, _ string) error { return errInjected }
