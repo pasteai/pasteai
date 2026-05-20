@@ -37,6 +37,11 @@ type Options struct {
 
 	// Logger for diagnostic output. Defaults to log.Default() with an [pasteai-mcp] prefix.
 	Logger *log.Logger
+
+	// HTTPClient is used for all requests to the pasteai HTTP server. If nil,
+	// a default client with a 30s timeout is used. Provide a custom client to
+	// use alternative auth mechanisms (cookies, mTLS, OAuth) via http.RoundTripper.
+	HTTPClient *http.Client
 }
 
 // Server is an MCP stdio server that forwards tool calls to a pasteai HTTP server.
@@ -94,11 +99,15 @@ func New(opts Options) *Server {
 		logger.Printf("using remote server at %s", baseURL)
 	}
 
+	httpClient := opts.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
 	return &Server{
 		baseURL:    baseURL,
 		apiKey:     opts.APIKey,
 		logger:     logger,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: httpClient,
 		cleanup:    cleanup,
 	}
 }

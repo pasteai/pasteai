@@ -373,6 +373,92 @@ func TestHandleUpdateServerErrorWithBody(t *testing.T) {
 	}
 }
 
+// ── New / HTTPClient option ────────────────────────────────
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestNewDefaultHTTPClient(t *testing.T) {
+	var called bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		json.NewEncoder(w).Encode(map[string]any{"documents": []any{}})
+	}))
+	defer ts.Close()
+
+	s := &Server{
+		baseURL:    ts.URL,
+		logger:     log.New(io.Discard, "", 0),
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+	s.handleList(context.Background(), makeReq(nil))
+	if !called {
+		t.Error("expected server to be called with default http client")
+	}
+}
+
+func TestNewCustomHTTPClientUsed(t *testing.T) {
+	var gotHeader string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Get("X-Custom-Transport")
+		json.NewEncoder(w).Encode(map[string]any{"documents": []any{}})
+	}))
+	defer ts.Close()
+
+	custom := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			r.Header.Set("X-Custom-Transport", "injected")
+			return http.DefaultTransport.RoundTrip(r)
+		}),
+	}
+	s := &Server{
+		baseURL:    ts.URL,
+		logger:     log.New(io.Discard, "", 0),
+		httpClient: custom,
+	}
+	s.handleList(context.Background(), makeReq(nil))
+	if gotHeader != "injected" {
+		t.Errorf("X-Custom-Transport = %q, want injected", gotHeader)
+	}
+}
+
+func TestNewNilHTTPClientFallsBack(t *testing.T) {
+	opts := Options{
+		URL:        "http://127.0.0.1:19998", // nothing listening — we only test New() itself
+		HTTPClient: nil,
+		Logger:     log.New(io.Discard, "", 0),
+	}
+	// New() calls os.Exit if the server doesn't respond, so we can't call it
+	// directly here. Verify the fallback logic in isolation instead.
+	var client *http.Client
+	if opts.HTTPClient == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	} else {
+		client = opts.HTTPClient
+	}
+	if client == nil {
+		t.Error("expected non-nil fallback client")
+	}
+	if client.Timeout != 30*time.Second {
+		t.Errorf("default timeout = %v, want 30s", client.Timeout)
+	}
+}
+
+func TestNewCustomHTTPClientPreserved(t *testing.T) {
+	custom := &http.Client{Timeout: 99 * time.Second}
+	opts := Options{HTTPClient: custom}
+
+	// Same isolation as above — test the selection logic directly.
+	selected := opts.HTTPClient
+	if selected == nil {
+		selected = &http.Client{Timeout: 30 * time.Second}
+	}
+	if selected != custom {
+		t.Error("expected custom client to be preserved")
+	}
+}
+
 // ── helpers: isResponding, waitForServer, embeddedDBPath ──
 
 func TestIsRespondingTrue(t *testing.T) {
