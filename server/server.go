@@ -196,17 +196,19 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 		PageURL:              s.baseURL + "/d/" + doc.ID,
 		OGImageURL:           s.baseURL + "/static/og-image.svg",
 		RawURL:               "/d/" + doc.ID + "/raw",
-		ShowDelete:           s.isAuthenticated(r),
+		ShowDelete:           s.canModify(ownerID, doc),
 		ShowVisibilityToggle: ownerID != "" && doc.OwnerID != "" && ownerID == doc.OwnerID,
 	})
 }
 
-func (s *srv) isAuthenticated(r *http.Request) bool {
+func (s *srv) canModify(ownerID string, doc *Document) bool {
 	if s.authProvider == nil {
 		return true
 	}
-	ownerID, err := s.authProvider.Authenticate(r)
-	return err == nil && ownerID != ""
+	if doc.OwnerID == "" {
+		return false
+	}
+	return ownerID == doc.OwnerID
 }
 
 func docDescription(content string) string {

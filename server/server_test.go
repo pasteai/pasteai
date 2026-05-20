@@ -1162,10 +1162,11 @@ func TestServerWithRealStore(t *testing.T) {
 
 func TestShowDeleteWithAuth(t *testing.T) {
 	ts, db := newServerWithAuth(t, "secret")
-	doc, _ := db.Create(context.Background(), server.Document{Title: "Auth Test", Content: "body"})
+	// Create doc owned by "owner" — the ownerID that "secret" maps to.
+	doc, _ := db.Create(context.Background(), server.Document{Title: "Auth Test", Content: "body", OwnerID: "owner"})
 	docURL := fmt.Sprintf("%s/d/%s", ts.URL, doc.ID)
 
-	// Without auth: delete button must be absent (ShowDelete = false)
+	// Without auth: delete button must be absent.
 	resp := mustGet(t, docURL)
 	defer resp.Body.Close()
 	html := readBody(t, resp)
@@ -1173,7 +1174,7 @@ func TestShowDeleteWithAuth(t *testing.T) {
 		t.Error("delete button must be absent without auth")
 	}
 
-	// With valid auth: delete button must be present (ShowDelete = true)
+	// Owner authenticated: delete button must be present.
 	req, _ := http.NewRequest(http.MethodGet, docURL, nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	resp2, err := http.DefaultClient.Do(req)
@@ -1183,7 +1184,7 @@ func TestShowDeleteWithAuth(t *testing.T) {
 	defer resp2.Body.Close()
 	html2 := readBody(t, resp2)
 	if !strings.Contains(html2, `class="delete-btn"`) {
-		t.Error("delete button must be present with valid auth")
+		t.Error("delete button must be present for document owner")
 	}
 }
 
