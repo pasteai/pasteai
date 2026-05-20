@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.8](https://github.com/pasteai/pasteai/compare/v0.0.7...v0.0.8) (2026-05-20)
+
+
+### Features
+
+* add AllowAnonymousWrites, HomeHandler option, and NavExtras template slot ([4c0074d](https://github.com/pasteai/pasteai/commit/4c0074d23e1bfdd128713a9454f73485ea7e023a))
+
+
+### Bug Fixes
+
+* log rollback failures, shut down embedded MCP server on exit, surface content errors in update, and add real-store integration test ([c465189](https://github.com/pasteai/pasteai/commit/c4651899494d2a57b9bf3f625d7c7e3502f77baf))
+
 ## [0.0.7](https://github.com/pasteai/pasteai/compare/v0.0.6...v0.0.7) (2026-05-19)
 
 
