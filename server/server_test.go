@@ -1171,6 +1171,74 @@ func TestShowDeleteWithAuth(t *testing.T) {
 	}
 }
 
+func TestAllowAnonymousWrites(t *testing.T) {
+	db := &testDB{store: newMemStore(), content: newMemContent()}
+	handler := server.NewServer(db.store, db.content, server.Options{
+		Logger:               log.New(io.Discard, "", 0),
+		AuthProvider:         server.NewStaticKeyAuth(map[string]string{"key": "owner"}),
+		AllowAnonymousWrites: true,
+	})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+
+	// Anonymous create of public doc — should succeed
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"anon","content":"hello","visibility":"public"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("anonymous public create: got %d, want 201", resp.StatusCode)
+	}
+
+	// Anonymous create of unlisted doc — should succeed
+	resp2 := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"anon","content":"hello","visibility":"unlisted"}`)
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusCreated {
+		t.Errorf("anonymous unlisted create: got %d, want 201", resp2.StatusCode)
+	}
+
+	// Anonymous create of private doc — should be rejected with 403
+	resp3 := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"anon","content":"hello","visibility":"private"}`)
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusForbidden {
+		t.Errorf("anonymous private create: got %d, want 403", resp3.StatusCode)
+	}
+}
+
+func TestAnonymousWritesBlockedByDefault(t *testing.T) {
+	ts, _ := newServerWithAuth(t, "key")
+
+	// Without AllowAnonymousWrites, anonymous creates must be rejected
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"anon","content":"hello","visibility":"public"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("anonymous write without flag: got %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestCustomHomeHandler(t *testing.T) {
+	db := &testDB{store: newMemStore(), content: newMemContent()}
+	customHome := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("custom home"))
+	})
+	handler := server.NewServer(db.store, db.content, server.Options{
+		Logger:      log.New(io.Discard, "", 0),
+		HomeHandler: customHome,
+	})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+
+	resp := mustGet(t, ts.URL+"/")
+	defer resp.Body.Close()
+	body := readBody(t, resp)
+	if !strings.Contains(body, "custom home") {
+		t.Errorf("expected custom home handler response, got: %s", body)
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

@@ -19,6 +19,7 @@
   <nav class="nav">
     <a href="/" class="nav-logo">PasteAI</a>
     <a href="/" class="nav-link">Documents</a>
+    {{if .NavExtras}}{{.NavExtras}}{{end}}
 
     <div class="theme-picker" id="theme-picker">
       <button class="theme-btn" id="theme-btn"

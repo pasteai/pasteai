@@ -47,11 +47,11 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		authProvider: opts.AuthProvider,
 	}
 	s.loadTemplates()
-	s.registerRoutes()
+	s.registerRoutes(opts.HomeHandler)
 
 	var handler http.Handler = s.mux
 	if opts.AuthProvider != nil {
-		handler = authMiddleware(opts.AuthProvider, s.mux)
+		handler = authMiddleware(opts.AuthProvider, opts.AllowAnonymousWrites, s.mux)
 	}
 	handler = gzipHandler(handler)
 	handler = securityHeaders(handler)
@@ -67,14 +67,18 @@ func (s *srv) loadTemplates() {
 		"templates/base.html", "templates/error.html"))
 }
 
-func (s *srv) registerRoutes() {
+func (s *srv) registerRoutes(homeHandler http.Handler) {
 	staticFS, err := fs.Sub(web.FS, "static")
 	if err != nil {
 		panic("web.FS missing static directory: " + err.Error())
 	}
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", staticCacheHandler(http.FileServerFS(staticFS))))
 
-	s.mux.HandleFunc("GET /{$}", s.handleHome)
+	if homeHandler != nil {
+		s.mux.Handle("GET /{$}", homeHandler)
+	} else {
+		s.mux.HandleFunc("GET /{$}", s.handleHome)
+	}
 	s.mux.HandleFunc("GET /d/{id}", s.handleViewDocument)
 	s.mux.HandleFunc("GET /d/{id}/raw", s.handleViewRaw)
 
@@ -87,9 +91,21 @@ func (s *srv) registerRoutes() {
 
 // ── Web UI handlers ────────────────────────────────────────
 
+// baseData is embedded in all template data structs to provide the NavExtras slot.
+// NavExtras is empty in the OSS server; the hosted tier injects login/logout HTML.
+type baseData struct {
+	NavExtras template.HTML
+}
+
 type homeData struct {
+	baseData
 	Documents []Document
 	NextToken string
+}
+
+type errorData struct {
+	baseData
+	Message string
 }
 
 func (s *srv) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +147,7 @@ func (s *srv) handleViewRaw(w http.ResponseWriter, r *http.Request) {
 }
 
 type documentData struct {
+	baseData
 	Document     Document
 	RenderedHTML template.HTML
 	Headings     []renderer.Heading
@@ -316,8 +333,13 @@ func (s *srv) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 		vis = VisibilityPublic
 	case VisibilityUnlisted:
 		// valid
+	case VisibilityPrivate:
+		if ownerFromCtx(r.Context()) == "" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "private documents require authentication"})
+			return
+		}
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "visibility must be public or unlisted"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "visibility must be public, unlisted, or private"})
 		return
 	}
 
@@ -439,7 +461,7 @@ func (s *srv) renderWith(w http.ResponseWriter, tmpl *template.Template, data an
 
 func (s *srv) renderNotFound(w http.ResponseWriter) {
 	var buf bytes.Buffer
-	data := map[string]string{"Message": "Document not found or has been removed."}
+	data := errorData{Message: "Document not found or has been removed."}
 	if err := s.errorTmpl.ExecuteTemplate(&buf, "base.html", data); err != nil {
 		s.logger.Printf("template error: %v", err)
 		http.Error(w, "not found", http.StatusNotFound)

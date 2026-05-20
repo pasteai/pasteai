@@ -9,7 +9,7 @@ import (
 
 func TestStaticKeyAuthValidKey(t *testing.T) {
 	auth := NewStaticKeyAuth(map[string]string{"secret-key": "owner-alice"})
-	handler := authMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware(auth, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		owner := ownerFromCtx(r.Context())
 		if owner != "owner-alice" {
 			t.Errorf("ownerID = %q, want owner-alice", owner)
@@ -25,7 +25,7 @@ func TestStaticKeyAuthValidKey(t *testing.T) {
 
 func TestStaticKeyAuthInvalidKey(t *testing.T) {
 	auth := NewStaticKeyAuth(map[string]string{"secret-key": "owner-alice"})
-	handler := authMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware(auth, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -40,7 +40,7 @@ func TestStaticKeyAuthInvalidKey(t *testing.T) {
 
 func TestStaticKeyAuthNoHeader(t *testing.T) {
 	auth := NewStaticKeyAuth(map[string]string{"secret-key": "owner-alice"})
-	handler := authMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware(auth, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		owner := ownerFromCtx(r.Context())
 		if owner != "" {
 			t.Errorf("expected empty ownerID with no auth header, got %q", owner)

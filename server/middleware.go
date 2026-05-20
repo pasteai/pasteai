@@ -21,8 +21,9 @@ func ownerFromCtx(ctx context.Context) string {
 
 // authMiddleware enforces authentication using an AuthProvider.
 // GET and HEAD requests always pass through (public read access).
-// Write requests require a valid owner identity from the provider.
-func authMiddleware(provider AuthProvider, next http.Handler) http.Handler {
+// Write requests require a valid owner identity unless allowAnonymousWrites is true,
+// in which case anonymous users may write (handlers enforce visibility restrictions).
+func authMiddleware(provider AuthProvider, allowAnonymousWrites bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ownerID, err := provider.Authenticate(r)
 		if err != nil {
@@ -32,7 +33,8 @@ func authMiddleware(provider AuthProvider, next http.Handler) http.Handler {
 			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
-		if ownerID == "" && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		isWrite := r.Method != http.MethodGet && r.Method != http.MethodHead
+		if ownerID == "" && isWrite && !allowAnonymousWrites {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="pasteai"`)
 			w.WriteHeader(http.StatusUnauthorized)
