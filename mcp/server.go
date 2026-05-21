@@ -168,6 +168,15 @@ func (s *Server) Run() error {
 	)
 	srv.AddTool(updateTool, s.handleUpdate)
 
+	deleteTool := mcpgo.NewTool("delete_document",
+		mcpgo.WithDescription("Permanently delete a PasteAI document by ID"),
+		mcpgo.WithString("id",
+			mcpgo.Required(),
+			mcpgo.Description("The document ID to delete"),
+		),
+	)
+	srv.AddTool(deleteTool, s.handleDelete)
+
 	return mcpserver.ServeStdio(srv)
 }
 
@@ -381,6 +390,36 @@ func (s *Server) handleUpdate(_ context.Context, req mcpgo.CallToolRequest) (*mc
 		return mcpgo.NewToolResultError("failed to parse server response"), nil
 	}
 	return mcpgo.NewToolResultText(fmt.Sprintf("Document updated.\nURL: %s\nID: %s", result.URL, result.ID)), nil
+}
+
+func (s *Server) handleDelete(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	id := req.GetString("id", "")
+	if id == "" {
+		return mcpgo.NewToolResultError("id is required"), nil
+	}
+
+	httpReq, err := http.NewRequest(http.MethodDelete, s.baseURL+"/api/documents/"+id, nil)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to build request: %v", err)), nil
+	}
+	if s.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
+
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to reach PasteAI server: %v", err)), nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return mcpgo.NewToolResultError(fmt.Sprintf("document %q not found", id)), nil
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		return mcpgo.NewToolResultError(fmt.Sprintf("server returned %d", resp.StatusCode)), nil
+	}
+
+	return mcpgo.NewToolResultText(fmt.Sprintf("Document %q deleted.", id)), nil
 }
 
 // ── Embedded server helpers ────────────────────────────────

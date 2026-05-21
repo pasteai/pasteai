@@ -373,6 +373,73 @@ func TestHandleUpdateServerErrorWithBody(t *testing.T) {
 	}
 }
 
+// ── handleDelete ───────────────────────────────────────────
+
+func TestHandleDeleteSuccess(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/documents/abc" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	tr, err := s.handleDelete(context.Background(), makeReq(map[string]any{"id": "abc"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Errorf("expected success, got error: %s", resultText(t, tr))
+	}
+	if !strings.Contains(resultText(t, tr), "abc") {
+		t.Errorf("expected ID in result: %s", resultText(t, tr))
+	}
+}
+
+func TestHandleDeleteMissingID(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("HTTP should not be called for missing id")
+	}))
+
+	tr, err := s.handleDelete(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for missing id")
+	}
+}
+
+func TestHandleDeleteNotFound(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	tr, err := s.handleDelete(context.Background(), makeReq(map[string]any{"id": "no-such"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for 404")
+	}
+	if !strings.Contains(resultText(t, tr), "no-such") {
+		t.Errorf("expected ID in error message: %s", resultText(t, tr))
+	}
+}
+
+func TestHandleDeleteServerError(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	tr, err := s.handleDelete(context.Background(), makeReq(map[string]any{"id": "x"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for 500")
+	}
+}
+
 // ── New / HTTPClient option ────────────────────────────────
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
