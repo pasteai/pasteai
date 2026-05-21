@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.10](https://github.com/pasteai/pasteai/compare/v0.0.9...v0.0.10) (2026-05-21)
+
+
+### Features
+
+* add nav-sign-in pill button style for hosted sign-in link ([af9db20](https://github.com/pasteai/pasteai/commit/af9db20aefbb6295cf3f0acc0e6b3428bd3673c3))
+* configure Kiro and opencode MCP on setup alongside Claude Code ([9128476](https://github.com/pasteai/pasteai/commit/912847650593bf41379b9c75c26e9b29cbaf262a))
+* GitHub/suggest-feature links on splash, Kiro/opencode in readme and steps ([72600dd](https://github.com/pasteai/pasteai/commit/72600dd5897083207a89afb31ece2dd8f9af1fcb))
+
 ## [0.0.9](https://github.com/pasteai/pasteai/compare/v0.0.8...v0.0.9) (2026-05-20)
 
 
