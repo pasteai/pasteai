@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,7 @@ type srv struct {
 	chromaCSS         template.CSS
 	authProvider      AuthProvider
 	defaultVisibility Visibility
+	eventListener     EventListener
 }
 
 // NewServer constructs the PasteAI HTTP handler. The caller is responsible for
@@ -47,6 +49,7 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		chromaCSS:         renderer.ThemeCSS(),
 		authProvider:      opts.AuthProvider,
 		defaultVisibility: opts.DefaultVisibility,
+		eventListener:     opts.EventListener,
 	}
 	s.loadTemplates()
 	s.registerRoutes(opts.HomeHandler)
@@ -187,6 +190,7 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ownerID := ownerFromCtx(r.Context())
+	s.notify(r.Context(), DocumentViewed, ownerID, doc.ID)
 	s.renderWith(w, s.documentTmpl, documentData{
 		Document:             *doc,
 		RenderedHTML:         result.HTML,
@@ -199,6 +203,12 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 		ShowDelete:           s.canModify(ownerID, doc),
 		ShowVisibilityToggle: ownerID != "" && doc.OwnerID != "" && ownerID == doc.OwnerID,
 	})
+}
+
+func (s *srv) notify(ctx context.Context, typ DocumentEvent, ownerID, docID string) {
+	if s.eventListener != nil {
+		s.eventListener.OnDocumentEvent(ctx, typ, ownerID, docID)
+	}
 }
 
 func (s *srv) canModify(ownerID string, doc *Document) bool {
@@ -286,6 +296,7 @@ func (s *srv) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 		}
 		doc.Content = string(raw)
 	}
+	s.notify(r.Context(), DocumentUpdated, ownerFromCtx(r.Context()), id)
 	writeJSON(w, http.StatusOK, documentDetailResponse{
 		documentResponse: s.toResponse(r, *doc),
 		Content:          doc.Content,
@@ -394,7 +405,7 @@ func (s *srv) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	doc.Content = req.Content
-
+	s.notify(r.Context(), DocumentCreated, doc.OwnerID, doc.ID)
 	writeJSON(w, http.StatusCreated, documentDetailResponse{
 		documentResponse: s.toResponse(r, *doc),
 		Content:          doc.Content,
@@ -436,6 +447,7 @@ func (s *srv) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	// non-fatal: content file may already be gone
 	s.content.Delete(r.Context(), id)
+	s.notify(r.Context(), DocumentDeleted, ownerFromCtx(r.Context()), id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

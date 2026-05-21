@@ -1256,6 +1256,188 @@ func TestCustomHomeHandler(t *testing.T) {
 	}
 }
 
+// ── EventListener tests ────────────────────────────────────────────────────
+
+type recordingListener struct {
+	mu     sync.Mutex
+	events []recordedEvent
+}
+
+type recordedEvent struct {
+	typ     server.DocumentEvent
+	ownerID string
+	docID   string
+}
+
+func (r *recordingListener) OnDocumentEvent(_ context.Context, typ server.DocumentEvent, ownerID, docID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, recordedEvent{typ, ownerID, docID})
+}
+
+func (r *recordingListener) last() (recordedEvent, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.events) == 0 {
+		return recordedEvent{}, false
+	}
+	return r.events[len(r.events)-1], true
+}
+
+func TestEventListenerCreate(t *testing.T) {
+	dir := t.TempDir()
+	boltStore, _ := store.NewBolt(filepath.Join(dir, "test.db"))
+	diskContent, _ := store.NewDiskContent(store.DirFromDBPath(filepath.Join(dir, "test.db")))
+	t.Cleanup(func() { boltStore.Close() })
+
+	listener := &recordingListener{}
+	h := server.NewServer(boltStore, diskContent, server.Options{
+		Logger:        log.New(io.Discard, "", 0),
+		EventListener: listener,
+	})
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"T","content":"C"}`)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: want 201 got %d", resp.StatusCode)
+	}
+	ev, ok := listener.last()
+	if !ok {
+		t.Fatal("no event emitted")
+	}
+	if ev.typ != server.DocumentCreated {
+		t.Errorf("event type: got %q want %q", ev.typ, server.DocumentCreated)
+	}
+}
+
+func TestEventListenerView(t *testing.T) {
+	dir := t.TempDir()
+	boltStore, _ := store.NewBolt(filepath.Join(dir, "test.db"))
+	diskContent, _ := store.NewDiskContent(store.DirFromDBPath(filepath.Join(dir, "test.db")))
+	t.Cleanup(func() { boltStore.Close() })
+
+	listener := &recordingListener{}
+	h := server.NewServer(boltStore, diskContent, server.Options{
+		Logger:        log.New(io.Discard, "", 0),
+		EventListener: listener,
+	})
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"T","content":"C"}`)
+	var created map[string]any
+	decodeJSON(t, resp.Body, &created)
+	resp.Body.Close()
+	docID := created["id"].(string)
+
+	resp2, err := http.Get(ts.URL + "/d/" + docID)
+	if err != nil {
+		t.Fatalf("view: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("view: want 200 got %d", resp2.StatusCode)
+	}
+	ev, _ := listener.last()
+	if ev.typ != server.DocumentViewed {
+		t.Errorf("event type: got %q want %q", ev.typ, server.DocumentViewed)
+	}
+	if ev.docID != docID {
+		t.Errorf("docID: got %q want %q", ev.docID, docID)
+	}
+}
+
+func TestEventListenerUpdate(t *testing.T) {
+	dir := t.TempDir()
+	boltStore, _ := store.NewBolt(filepath.Join(dir, "test.db"))
+	diskContent, _ := store.NewDiskContent(store.DirFromDBPath(filepath.Join(dir, "test.db")))
+	t.Cleanup(func() { boltStore.Close() })
+
+	listener := &recordingListener{}
+	h := server.NewServer(boltStore, diskContent, server.Options{
+		Logger:        log.New(io.Discard, "", 0),
+		EventListener: listener,
+	})
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"T","content":"C"}`)
+	var created map[string]any
+	decodeJSON(t, resp.Body, &created)
+	resp.Body.Close()
+	docID := created["id"].(string)
+
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/documents/"+docID,
+		strings.NewReader(`{"title":"Updated"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	resp2.Body.Close()
+
+	ev, _ := listener.last()
+	if ev.typ != server.DocumentUpdated {
+		t.Errorf("event type: got %q want %q", ev.typ, server.DocumentUpdated)
+	}
+}
+
+func TestEventListenerDelete(t *testing.T) {
+	dir := t.TempDir()
+	boltStore, _ := store.NewBolt(filepath.Join(dir, "test.db"))
+	diskContent, _ := store.NewDiskContent(store.DirFromDBPath(filepath.Join(dir, "test.db")))
+	t.Cleanup(func() { boltStore.Close() })
+
+	listener := &recordingListener{}
+	h := server.NewServer(boltStore, diskContent, server.Options{
+		Logger:        log.New(io.Discard, "", 0),
+		EventListener: listener,
+	})
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"T","content":"C"}`)
+	var created map[string]any
+	decodeJSON(t, resp.Body, &created)
+	resp.Body.Close()
+	docID := created["id"].(string)
+
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/documents/"+docID, nil)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	resp2.Body.Close()
+
+	ev, _ := listener.last()
+	if ev.typ != server.DocumentDeleted {
+		t.Errorf("event type: got %q want %q", ev.typ, server.DocumentDeleted)
+	}
+}
+
+func TestEventListenerNotCalledOnError(t *testing.T) {
+	listener := &recordingListener{}
+	h := server.NewServer(&alwaysFailStore{}, newMemContent(), server.Options{
+		Logger:        log.New(io.Discard, "", 0),
+		EventListener: listener,
+	})
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+
+	resp := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"T","content":"C"}`)
+	resp.Body.Close()
+	if _, ok := listener.last(); ok {
+		t.Error("expected no event on store error, got one")
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

@@ -12,4 +12,5 @@ type Options struct {
 	DefaultVisibility    Visibility   // default visibility for authenticated creates; empty means public
 	HomeHandler          http.Handler // optional; replaces the default GET /{$} document-list handler
 	Logger               *log.Logger  // optional; nil = log.Default()
+	EventListener        EventListener // optional; called after successful document operations
 }

@@ -11,6 +11,23 @@ import (
 var ErrNotFound = errors.New("document not found")
 var ErrContentMissing = errors.New("document content file missing")
 
+// DocumentEvent identifies which document lifecycle operation just succeeded.
+type DocumentEvent string
+
+const (
+	DocumentCreated DocumentEvent = "created"
+	DocumentViewed  DocumentEvent = "viewed"
+	DocumentUpdated DocumentEvent = "updated"
+	DocumentDeleted DocumentEvent = "deleted"
+)
+
+// EventListener receives notifications after successful document operations.
+// All methods are called after the operation succeeds; failures are not reported.
+// Implementations must be safe for concurrent use.
+type EventListener interface {
+	OnDocumentEvent(ctx context.Context, typ DocumentEvent, ownerID, docID string)
+}
+
 type Store interface {
 	Create(ctx context.Context, doc Document) (*Document, error)
 	List(ctx context.Context, opts ListOptions) (*ListResult, error)
