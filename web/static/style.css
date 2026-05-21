@@ -608,6 +608,29 @@ button.nav-link {
   animation: fade-up 0.8s ease-out 0.30s both;
 }
 
+.hero-links {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  flex-wrap: wrap;
+  animation: fade-up 0.8s ease-out 0.45s both;
+}
+.hero-link {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 0.3rem 0.9rem;
+  transition: color 0.15s, border-color 0.15s;
+}
+.hero-link:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
+  text-decoration: none;
+}
+
 /* Section headers */
 
 .section-header {

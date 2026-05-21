@@ -18,7 +18,7 @@ AI publishes markdown documents via MCP. You read them in a clean, themed web UI
 
 ## Quickstart
 
-Run `/setup` — Claude will install the binary and configure MCP. Then restart Claude Code to activate.
+Run `/setup` in Claude Code — it installs the binary and configures MCP. Then restart your editor to activate.
 
 Or install manually:
 
@@ -40,8 +40,11 @@ curl -sSL https://raw.githubusercontent.com/pasteai/pasteai/main/install.sh | sh
 go install github.com/pasteai/pasteai/cmd/pasteai@latest
 ```
 
-Add pasteai to `~/.claude.json` (global — available in all Claude Code projects):
+Then run `pasteai setup` to register with your AI editor(s). It configures **Claude Code**, **Kiro**, and **opencode** simultaneously.
 
+To configure manually, add the entry to the appropriate config file:
+
+**Claude Code** (`~/.claude.json`) and **Kiro** (`~/.kiro/settings/mcp.json`):
 ```json
 {
   "mcpServers": {
@@ -53,9 +56,21 @@ Add pasteai to `~/.claude.json` (global — available in all Claude Code project
 }
 ```
 
-Use the absolute path from `which pasteai` or `$(go env GOPATH)/bin/pasteai` — Claude Code does not inherit your shell PATH. The `/setup` slash command and `make setup` resolve the path and merge this safely (preserving any existing servers).
+**opencode** (`~/.config/opencode/opencode.json`):
+```json
+{
+  "mcp": {
+    "pasteai": {
+      "type": "local",
+      "command": ["/full/path/to/pasteai", "mcp"]
+    }
+  }
+}
+```
 
-Restart Claude Code, then ask: *"Summarise what we discussed and publish it."*
+Use the absolute path from `which pasteai` or `$(go env GOPATH)/bin/pasteai` — AI editors do not inherit your shell PATH.
+
+Restart your editor, then ask: *"Summarise what we discussed and publish it."*
 
 ---
 
@@ -63,7 +78,7 @@ Restart Claude Code, then ask: *"Summarise what we discussed and publish it."*
 
 | Command | Description |
 |---|---|
-| `pasteai setup` | Configure MCP in `~/.claude.json` (interactive or via flags) |
+| `pasteai setup` | Configure MCP in Claude Code, Kiro, and opencode (interactive or via flags) |
 | `pasteai setup -mode embedded` | Configure without prompts (non-interactive) |
 | `pasteai doctor` | Diagnose common setup problems |
 | `pasteai serve [flags]` | Start the HTTP server |
