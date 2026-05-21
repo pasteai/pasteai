@@ -30,6 +30,7 @@ type srv struct {
 	authProvider      AuthProvider
 	defaultVisibility Visibility
 	eventListener     EventListener
+	mcpHandler        http.Handler
 }
 
 // NewServer constructs the PasteAI HTTP handler. The caller is responsible for
@@ -50,6 +51,7 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		authProvider:      opts.AuthProvider,
 		defaultVisibility: opts.DefaultVisibility,
 		eventListener:     opts.EventListener,
+		mcpHandler:        opts.MCPHandler,
 	}
 	s.loadTemplates()
 	s.registerRoutes(opts.HomeHandler)
@@ -92,6 +94,10 @@ func (s *srv) registerRoutes(homeHandler http.Handler) {
 	s.mux.HandleFunc("GET /api/documents/{id}", s.handleGetDocument)
 	s.mux.HandleFunc("PUT /api/documents/{id}", s.handleUpdateDocument)
 	s.mux.HandleFunc("DELETE /api/documents/{id}", s.handleDeleteDocument)
+
+	if s.mcpHandler != nil {
+		s.mux.Handle("/mcp", s.mcpHandler)
+	}
 }
 
 // ── Web UI handlers ────────────────────────────────────────

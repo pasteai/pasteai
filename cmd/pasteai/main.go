@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -53,6 +54,7 @@ func runServe(args []string) {
 	dbPath := fs.String("db", "", "Path to bbolt database file (default ~/.pasteai/documents.db)")
 	baseURL := fs.String("base-url", "", "Base URL for document links (e.g. https://pasteai.io)")
 	apiKey := fs.String("api-key", os.Getenv("PASTEAI_API_KEY"), "Require this Bearer token on API writes (optional)")
+	enableMCPHTTP := fs.Bool("enable-mcp-http", false, "Mount a streamable-HTTP MCP endpoint at /mcp (for claude.ai Custom Connectors)")
 	fs.Parse(args)
 
 	if *dbPath == "" {
@@ -84,6 +86,22 @@ func runServe(args []string) {
 		opts.AuthProvider = server.NewStaticKeyAuth(map[string]string{*apiKey: "owner"})
 	} else {
 		logger.Printf("warning: no -api-key set; all API writes including DELETE are open to any caller that can reach %s", *addr)
+	}
+	if *enableMCPHTTP {
+		mcpURL := *baseURL
+		if mcpURL == "" {
+			_, port, err := net.SplitHostPort(*addr)
+			if err != nil {
+				port = "8080"
+			}
+			mcpURL = "http://127.0.0.1:" + port
+		}
+		opts.MCPHandler = mcp.NewHTTPHandler(mcp.Options{
+			URL:    mcpURL,
+			APIKey: *apiKey,
+			Logger: logger,
+		})
+		logger.Printf("MCP HTTP endpoint enabled at /mcp")
 	}
 	handler := server.NewServer(boltStore, diskContent, opts)
 
@@ -133,10 +151,11 @@ Usage:
   pasteai version         Print version
 
 Serve flags:
-  -addr string      Address to listen on (default ":8080")
-  -db string        Path to database file (default ~/.pasteai/documents.db)
-  -base-url string  Base URL for links, e.g. https://pasteai.io
-  -api-key string   Require this Bearer token on API writes (optional; set via PASTEAI_API_KEY)
+  -addr string           Address to listen on (default ":8080")
+  -db string             Path to database file (default ~/.pasteai/documents.db)
+  -base-url string       Base URL for links, e.g. https://pasteai.io
+  -api-key string        Require this Bearer token on API writes (optional; set via PASTEAI_API_KEY)
+  -enable-mcp-http       Mount streamable-HTTP MCP endpoint at /mcp (for claude.ai Custom Connectors)
 
 MCP environment variables:
   PASTEAI_URL       URL of the pasteai server; if unset, an embedded server starts automatically

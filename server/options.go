@@ -13,4 +13,5 @@ type Options struct {
 	HomeHandler          http.Handler // optional; replaces the default GET /{$} document-list handler
 	Logger               *log.Logger  // optional; nil = log.Default()
 	EventListener        EventListener // optional; called after successful document operations
+	MCPHandler           http.Handler  // optional; when set, mounted at /mcp (streamable-HTTP MCP transport)
 }

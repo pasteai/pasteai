@@ -124,6 +124,49 @@ func startServerWithKey(t *testing.T, apiKey string) string {
 	return addr
 }
 
+func startMCPHTTPServer(t *testing.T) string {
+	t.Helper()
+	return startMCPHTTPServerWithKey(t, "")
+}
+
+func startMCPHTTPServerWithKey(t *testing.T, apiKey string) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "documents.db")
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	args := []string{"serve",
+		"-addr", fmt.Sprintf(":%d", port),
+		"-db", dbPath,
+		"-enable-mcp-http",
+	}
+	if apiKey != "" {
+		args = append(args, "-api-key", apiKey)
+	}
+	cmd := exec.Command(testBinaryPath, args...)
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	})
+
+	if !waitReady("http://" + addr) {
+		cmd.Process.Kill()
+		t.Fatal("server did not become ready within 5s")
+	}
+	return addr
+}
+
 func waitReady(baseURL string) bool {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

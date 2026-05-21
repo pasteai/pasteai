@@ -199,6 +199,33 @@ To read documents from your phone or another machine, use Tailscale. Start `past
 | `title` | no | New title (omit to keep existing) |
 | `content` | no | New markdown content (omit to keep existing) |
 
+**`delete_document`** — permanently delete a document by ID.
+
+| Parameter | Required | Description |
+|---|---|---|
+| `id` | yes | Document ID |
+
+---
+
+## claude.ai Custom Connectors (streamable-HTTP MCP)
+
+To connect a deployed PasteAI server to **claude.ai** as a Custom Connector, start the server with `-enable-mcp-http`. This mounts a stateless streamable-HTTP MCP endpoint at `/mcp` alongside the web UI:
+
+```sh
+pasteai serve \
+  -api-key <your-key> \
+  -base-url https://your-server.example.com \
+  -enable-mcp-http
+```
+
+Then in claude.ai → Settings → Connectors, add:
+
+```
+https://your-server.example.com/mcp
+```
+
+The `/mcp` endpoint requires the same Bearer token as the API when `-api-key` is set. The stdio transport (`pasteai mcp`) is unaffected — both can run simultaneously.
+
 ---
 
 ## REST API

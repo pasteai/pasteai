@@ -53,6 +53,37 @@ type Server struct {
 	cleanup    func() // called on Run return; non-nil only for embedded servers
 }
 
+// NewHTTPHandler builds a stateless streamable-HTTP MCP handler that forwards
+// tool calls to opts.URL. Unlike New, it does not start an embedded server and
+// does not dial the target on creation — the target only needs to be reachable
+// when tool calls arrive. Intended for mounting on an existing HTTP mux.
+func NewHTTPHandler(opts Options) http.Handler {
+	if opts.URL == "" {
+		panic("[pasteai-mcp] NewHTTPHandler requires a non-empty URL")
+	}
+	u, err := url.Parse(opts.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		panic(fmt.Sprintf("[pasteai-mcp] NewHTTPHandler: invalid URL %q", opts.URL))
+	}
+	u.Path, u.RawQuery, u.Fragment = "", "", ""
+
+	logger := opts.Logger
+	if logger == nil {
+		logger = log.New(os.Stderr, "[pasteai-mcp] ", log.LstdFlags)
+	}
+	httpClient := opts.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	s := &Server{
+		baseURL:    u.String(),
+		apiKey:     opts.APIKey,
+		logger:     logger,
+		httpClient: httpClient,
+	}
+	return s.Handler()
+}
+
 // New creates a new MCP Server. If opts.URL is empty and no pasteai server is
 // responding on the embedded port, an embedded HTTP server is started in-process.
 func New(opts Options) *Server {
@@ -119,7 +150,23 @@ func (s *Server) Run() error {
 	srv := mcpserver.NewMCPServer("pasteai", "1.0.0",
 		mcpserver.WithToolCapabilities(false),
 	)
+	s.registerTools(srv)
+	return mcpserver.ServeStdio(srv)
+}
 
+// Handler returns a streamable-HTTP MCP handler that exposes the same tools as
+// the stdio server. Mount it at /mcp on an existing HTTP mux. The handler is
+// stateless — each POST is a self-contained request/response; no session state
+// is kept between calls.
+func (s *Server) Handler() http.Handler {
+	srv := mcpserver.NewMCPServer("pasteai", "1.0.0",
+		mcpserver.WithToolCapabilities(false),
+	)
+	s.registerTools(srv)
+	return mcpserver.NewStreamableHTTPServer(srv, mcpserver.WithStateLess(true))
+}
+
+func (s *Server) registerTools(srv *mcpserver.MCPServer) {
 	publishTool := mcpgo.NewTool("publish_document",
 		mcpgo.WithDescription("Publish a markdown document to PasteAI and get back a shareable URL"),
 		mcpgo.WithString("title",
@@ -176,8 +223,6 @@ func (s *Server) Run() error {
 		),
 	)
 	srv.AddTool(deleteTool, s.handleDelete)
-
-	return mcpserver.ServeStdio(srv)
 }
 
 func (s *Server) handlePublish(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
