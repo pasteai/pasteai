@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.9](https://github.com/pasteai/pasteai/compare/v0.0.8...v0.0.9) (2026-05-20)
+
+
+### Features
+
+* add HTTPClient option to MCP server Options ([4e9e8aa](https://github.com/pasteai/pasteai/commit/4e9e8aa5d2b432281d36211367e4c6852241d8a0))
+* arctic default theme, nav button reset, avatar styles ([61f0e88](https://github.com/pasteai/pasteai/commit/61f0e8827e8f4e58ce90e52e9ace9aac714d6b5b))
+* owner-only delete, visibility toggle styles ([31fd274](https://github.com/pasteai/pasteai/commit/31fd2748e2d305e7f8f51763aab4bf24af8167c5))
+* visibility controls — toggle per-doc, configurable default ([c48cc32](https://github.com/pasteai/pasteai/commit/c48cc329de3d091e4c677e6862721a22668068e2))
+
 ## [0.0.8](https://github.com/pasteai/pasteai/compare/v0.0.7...v0.0.8) (2026-05-20)
 
 
