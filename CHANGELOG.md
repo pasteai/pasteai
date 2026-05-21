@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.11](https://github.com/pasteai/pasteai/compare/v0.0.10...v0.0.11) (2026-05-21)
+
+
+### Features
+
+* add delete_document MCP tool closes [#12](https://github.com/pasteai/pasteai/issues/12) ([dcbbc07](https://github.com/pasteai/pasteai/commit/dcbbc07cc399791e0114142c965fc94a93e3746d))
+* add EventListener hook for document lifecycle events ([0e17e08](https://github.com/pasteai/pasteai/commit/0e17e08f3bb35987036ac0d45e8b2b0ca5c54fe9))
+* add streamable-HTTP MCP transport for claude.ai Custom Connectors closes [#10](https://github.com/pasteai/pasteai/issues/10) ([9e3b584](https://github.com/pasteai/pasteai/commit/9e3b58493fa0383308eca8cedb1a77ed7e841c7d))
+* add title search (API, home page, MCP tool) with themed search form closes [#11](https://github.com/pasteai/pasteai/issues/11) ([ee75b72](https://github.com/pasteai/pasteai/commit/ee75b7234b262b88b06ef1f446e4cea9a1afaa68))
+
+
+### Bug Fixes
+
+* preserve user config when re-running setup on upgrade ([cd93ae0](https://github.com/pasteai/pasteai/commit/cd93ae0d4c6c307e4b722fe3c6f73db952478161))
+
 ## [0.0.10](https://github.com/pasteai/pasteai/compare/v0.0.9...v0.0.10) (2026-05-21)
 
 
