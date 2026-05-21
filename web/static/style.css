@@ -328,6 +328,26 @@ a:hover {
 }
 .nav-link:hover { color: var(--color-text); text-decoration: none; }
 
+/* Sign-in call-to-action pill (injected via NavExtras on hosted tier) */
+.nav-sign-in {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-text);
+  text-decoration: none;
+  background: var(--color-surface-interactive);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 0.3rem 0.85rem;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.nav-sign-in:hover {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
 /* Reset button-as-nav-link (e.g. sign out form button) */
 button.nav-link {
   background: none;
