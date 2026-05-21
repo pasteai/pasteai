@@ -39,3 +39,14 @@ type ListResult struct {
 	Documents []Document
 	NextToken string // empty when there are no more pages
 }
+
+// SearchOptions controls what Search returns.
+// Query is matched case-insensitively against document titles.
+// If OwnerID is non-empty, all docs for that owner are eligible (any visibility).
+// If OwnerID is empty, only public docs are eligible.
+// Limit defaults to 20 when ≤0.
+type SearchOptions struct {
+	Query   string
+	OwnerID string
+	Limit   int
+}

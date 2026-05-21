@@ -284,6 +284,84 @@ func TestBoltListByOwner(t *testing.T) {
 	}
 }
 
+func TestBoltSearchNoResults(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	s.Create(ctx, server.Document{Title: "Hello world", Visibility: server.VisibilityPublic})
+
+	results, err := s.Search(ctx, server.SearchOptions{Query: "nomatch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected no results, got %d", len(results))
+	}
+}
+
+func TestBoltSearchTitleMatch(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	s.Create(ctx, server.Document{Title: "Auth flow guide", Visibility: server.VisibilityPublic})
+	s.Create(ctx, server.Document{Title: "Deployment notes", Visibility: server.VisibilityPublic})
+
+	results, err := s.Search(ctx, server.SearchOptions{Query: "AUTH"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Title != "Auth flow guide" {
+		t.Errorf("expected [Auth flow guide], got %v", results)
+	}
+}
+
+func TestBoltSearchVisibility(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	s.Create(ctx, server.Document{Title: "public doc", Visibility: server.VisibilityPublic})
+	s.Create(ctx, server.Document{Title: "unlisted doc", OwnerID: "alice", Visibility: server.VisibilityUnlisted})
+
+	pub, _ := s.Search(ctx, server.SearchOptions{Query: "doc"})
+	if len(pub) != 1 || pub[0].Title != "public doc" {
+		t.Errorf("anonymous should see public only, got %v", pub)
+	}
+
+	own, _ := s.Search(ctx, server.SearchOptions{Query: "doc", OwnerID: "alice"})
+	if len(own) != 1 || own[0].Title != "unlisted doc" {
+		t.Errorf("owner should see their docs, got %v", own)
+	}
+}
+
+func TestBoltSearchLimit(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	for i := range 5 {
+		s.Create(ctx, server.Document{Title: fmt.Sprintf("doc %d", i), Visibility: server.VisibilityPublic})
+	}
+
+	results, err := s.Search(ctx, server.SearchOptions{Query: "doc", Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Errorf("expected 3 results, got %d", len(results))
+	}
+}
+
+func TestBoltSearchNewestFirst(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	s.Create(ctx, server.Document{Title: "first doc", Visibility: server.VisibilityPublic})
+	time.Sleep(time.Millisecond)
+	s.Create(ctx, server.Document{Title: "second doc", Visibility: server.VisibilityPublic})
+
+	results, err := s.Search(ctx, server.SearchOptions{Query: "doc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 || results[0].Title != "second doc" {
+		t.Errorf("expected newest first, got %v", results)
+	}
+}
+
 func TestBoltPersistence(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "persist.db")

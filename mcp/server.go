@@ -223,6 +223,15 @@ func (s *Server) registerTools(srv *mcpserver.MCPServer) {
 		),
 	)
 	srv.AddTool(deleteTool, s.handleDelete)
+
+	searchTool := mcpgo.NewTool("search_documents",
+		mcpgo.WithDescription("Search PasteAI documents by title keyword"),
+		mcpgo.WithString("query",
+			mcpgo.Required(),
+			mcpgo.Description("Keyword to search for in document titles"),
+		),
+	)
+	srv.AddTool(searchTool, s.handleSearch)
 }
 
 func (s *Server) handlePublish(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -465,6 +474,66 @@ func (s *Server) handleDelete(_ context.Context, req mcpgo.CallToolRequest) (*mc
 	}
 
 	return mcpgo.NewToolResultText(fmt.Sprintf("Document %q deleted.", id)), nil
+}
+
+func (s *Server) handleSearch(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	query := req.GetString("query", "")
+	if query == "" {
+		return mcpgo.NewToolResultError("query is required"), nil
+	}
+
+	httpReq, err := http.NewRequest(http.MethodGet, s.baseURL+"/api/search?q="+url.QueryEscape(query), nil)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to build request: %v", err)), nil
+	}
+	if s.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
+
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to reach PasteAI server: %v", err)), nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errBody struct {
+			Error string `json:"error"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&errBody) == nil && errBody.Error != "" {
+			return mcpgo.NewToolResultError(fmt.Sprintf("server error (%d): %s", resp.StatusCode, errBody.Error)), nil
+		}
+		return mcpgo.NewToolResultError(fmt.Sprintf("server returned %d", resp.StatusCode)), nil
+	}
+
+	var searchResp struct {
+		Documents []struct {
+			ID         string `json:"id"`
+			Title      string `json:"title"`
+			Author     string `json:"author"`
+			Visibility string `json:"visibility"`
+			CreatedAt  string `json:"created_at"`
+			URL        string `json:"url"`
+		} `json:"documents"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return mcpgo.NewToolResultError("failed to parse server response"), nil
+	}
+	docs := searchResp.Documents
+
+	if len(docs) == 0 {
+		return mcpgo.NewToolResultText(fmt.Sprintf("No documents found matching %q.", query)), nil
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d document(s) matching %q:\n\n", len(docs), query)
+	for _, d := range docs {
+		fmt.Fprintf(&sb, "- [%s](%s) (ID: %s", d.Title, d.URL, d.ID)
+		if d.Author != "" {
+			fmt.Fprintf(&sb, ", by %s", d.Author)
+		}
+		fmt.Fprintf(&sb, ")\n")
+	}
+	return mcpgo.NewToolResultText(sb.String()), nil
 }
 
 // ── Embedded server helpers ────────────────────────────────

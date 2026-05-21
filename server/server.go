@@ -94,6 +94,7 @@ func (s *srv) registerRoutes(homeHandler http.Handler) {
 	s.mux.HandleFunc("GET /api/documents/{id}", s.handleGetDocument)
 	s.mux.HandleFunc("PUT /api/documents/{id}", s.handleUpdateDocument)
 	s.mux.HandleFunc("DELETE /api/documents/{id}", s.handleDeleteDocument)
+	s.mux.HandleFunc("GET /api/search", s.handleSearch)
 
 	if s.mcpHandler != nil {
 		s.mux.Handle("/mcp", s.mcpHandler)
@@ -112,6 +113,8 @@ type homeData struct {
 	baseData
 	Documents []Document
 	NextToken string
+	Query     string
+	IsSearch  bool
 }
 
 type errorData struct {
@@ -120,6 +123,23 @@ type errorData struct {
 }
 
 func (s *srv) handleHome(w http.ResponseWriter, r *http.Request) {
+	if q := r.URL.Query().Get("q"); q != "" {
+		docs, err := s.store.Search(r.Context(), SearchOptions{
+			Query:   q,
+			OwnerID: ownerFromCtx(r.Context()),
+			Limit:   20,
+		})
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		s.renderWith(w, s.homeTmpl, homeData{
+			Documents: docs,
+			Query:     q,
+			IsSearch:  true,
+		})
+		return
+	}
 	result, err := s.store.List(r.Context(), ListOptions{
 		OwnerID:   ownerFromCtx(r.Context()),
 		Limit:     20,
@@ -421,6 +441,28 @@ func (s *srv) handleCreateDocument(w http.ResponseWriter, r *http.Request) {
 type listResponse struct {
 	Documents []documentResponse `json:"documents"`
 	NextToken string             `json:"next_token,omitempty"`
+}
+
+func (s *srv) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if q == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "q parameter is required"})
+		return
+	}
+	docs, err := s.store.Search(r.Context(), SearchOptions{
+		Query:   q,
+		OwnerID: ownerFromCtx(r.Context()),
+		Limit:   20,
+	})
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	resp := make([]documentResponse, len(docs))
+	for i, d := range docs {
+		resp[i] = s.toResponse(r, d)
+	}
+	writeJSON(w, http.StatusOK, listResponse{Documents: resp})
 }
 
 func (s *srv) handleListDocuments(w http.ResponseWriter, r *http.Request) {

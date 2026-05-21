@@ -114,6 +114,33 @@ func (m *memStore) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *memStore) Search(_ context.Context, opts server.SearchOptions) ([]server.Document, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	q := strings.ToLower(opts.Query)
+	var docs []server.Document
+	for _, d := range m.docs {
+		visible := false
+		if opts.OwnerID != "" {
+			visible = d.OwnerID == opts.OwnerID
+		} else {
+			visible = d.Visibility == server.VisibilityPublic
+		}
+		if visible && strings.Contains(strings.ToLower(d.Title), q) {
+			docs = append(docs, *d)
+		}
+	}
+	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.After(docs[j].CreatedAt) })
+	if len(docs) > limit {
+		docs = docs[:limit]
+	}
+	return docs, nil
+}
+
 func (m *memStore) Close() error { return nil }
 
 type memContent struct {
@@ -182,6 +209,9 @@ func (*alwaysFailStore) Create(_ context.Context, _ server.Document) (*server.Do
 	return nil, errInjected
 }
 func (*alwaysFailStore) List(_ context.Context, _ server.ListOptions) (*server.ListResult, error) {
+	return nil, errInjected
+}
+func (*alwaysFailStore) Search(_ context.Context, _ server.SearchOptions) ([]server.Document, error) {
 	return nil, errInjected
 }
 func (*alwaysFailStore) Get(_ context.Context, _ string) (*server.Document, error) {
@@ -372,6 +402,70 @@ func TestListDocuments(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ── memStore.Search unit tests ─────────────────────────────
+
+func TestMemStoreSearchMatch(t *testing.T) {
+	m := newMemStore()
+	ctx := context.Background()
+	m.Create(ctx, server.Document{Title: "Auth flow guide", Visibility: server.VisibilityPublic})
+	m.Create(ctx, server.Document{Title: "Deployment notes", Visibility: server.VisibilityPublic})
+
+	results, err := m.Search(ctx, server.SearchOptions{Query: "auth"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Title != "Auth flow guide" {
+		t.Errorf("got %v, want [Auth flow guide]", results)
+	}
+}
+
+func TestMemStoreSearchCaseInsensitive(t *testing.T) {
+	m := newMemStore()
+	ctx := context.Background()
+	m.Create(ctx, server.Document{Title: "Auth flow guide", Visibility: server.VisibilityPublic})
+
+	results, err := m.Search(ctx, server.SearchOptions{Query: "AUTH FLOW"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Errorf("case-insensitive match failed: got %d results", len(results))
+	}
+}
+
+func TestMemStoreSearchVisibility(t *testing.T) {
+	m := newMemStore()
+	ctx := context.Background()
+	m.Create(ctx, server.Document{Title: "public doc", Visibility: server.VisibilityPublic})
+	m.Create(ctx, server.Document{Title: "unlisted doc", OwnerID: "alice", Visibility: server.VisibilityUnlisted})
+
+	// Anonymous: public only
+	pub, _ := m.Search(ctx, server.SearchOptions{Query: "doc"})
+	if len(pub) != 1 || pub[0].Title != "public doc" {
+		t.Errorf("anonymous search should see public only, got %v", pub)
+	}
+
+	// Owner: all their docs
+	own, _ := m.Search(ctx, server.SearchOptions{Query: "doc", OwnerID: "alice"})
+	if len(own) != 1 || own[0].Title != "unlisted doc" {
+		t.Errorf("owner search should see all their docs, got %v", own)
+	}
+}
+
+func TestMemStoreSearchNoMatch(t *testing.T) {
+	m := newMemStore()
+	ctx := context.Background()
+	m.Create(ctx, server.Document{Title: "Hello world", Visibility: server.VisibilityPublic})
+
+	results, err := m.Search(ctx, server.SearchOptions{Query: "nomatch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected empty results, got %v", results)
 	}
 }
 
@@ -631,6 +725,146 @@ func TestHomePageEmptyState(t *testing.T) {
 	html := readBody(t, resp)
 	if !strings.Contains(html, "empty-state") {
 		t.Error("expected empty-state element when no documents")
+	}
+}
+
+// ── Search endpoint tests ──────────────────────────────────
+
+func TestSearchEndpointReturnsMatches(t *testing.T) {
+	ts, db := newTestServer(t)
+	ctx := context.Background()
+	db.Create(ctx, server.Document{Title: "Auth flow guide", Visibility: server.VisibilityPublic})
+	db.Create(ctx, server.Document{Title: "Deployment notes", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, ts.URL+"/api/search?q=auth")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var result struct {
+		Documents []map[string]any `json:"documents"`
+	}
+	decodeJSON(t, resp.Body, &result)
+	if len(result.Documents) != 1 {
+		t.Fatalf("got %d documents, want 1", len(result.Documents))
+	}
+	if result.Documents[0]["title"] != "Auth flow guide" {
+		t.Errorf("got title %v, want Auth flow guide", result.Documents[0]["title"])
+	}
+}
+
+func TestSearchEndpointEmptyQuery(t *testing.T) {
+	ts, _ := newTestServer(t)
+	resp := mustGet(t, ts.URL+"/api/search")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestSearchEndpointNoResults(t *testing.T) {
+	ts, db := newTestServer(t)
+	ctx := context.Background()
+	db.Create(ctx, server.Document{Title: "Hello world", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, ts.URL+"/api/search?q=nomatch")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var result struct {
+		Documents []map[string]any `json:"documents"`
+	}
+	decodeJSON(t, resp.Body, &result)
+	if len(result.Documents) != 0 {
+		t.Errorf("expected empty results, got %d", len(result.Documents))
+	}
+}
+
+func TestHomeSearchMode(t *testing.T) {
+	ts, db := newTestServer(t)
+	ctx := context.Background()
+	db.Create(ctx, server.Document{Title: "Auth flow guide", Visibility: server.VisibilityPublic})
+	db.Create(ctx, server.Document{Title: "Deployment notes", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, ts.URL+"/?q=auth")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	html := readBody(t, resp)
+	if !strings.Contains(html, "Auth flow guide") {
+		t.Error("search result not in home page HTML")
+	}
+	if strings.Contains(html, "Deployment notes") {
+		t.Error("non-matching doc should not appear in search results")
+	}
+}
+
+func TestHomeSearchBoxRendered(t *testing.T) {
+	ts, _ := newTestServer(t)
+	resp := mustGet(t, ts.URL+"/")
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+	if !strings.Contains(html, `name="q"`) {
+		t.Error("home page must contain search input with name=q")
+	}
+	if !strings.Contains(html, `class="search-form"`) {
+		t.Error("home page must contain search-form element")
+	}
+}
+
+func TestHomeSearchResultsHeading(t *testing.T) {
+	ts, db := newTestServer(t)
+	ctx := context.Background()
+	db.Create(ctx, server.Document{Title: "Auth flow guide", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, ts.URL+"/?q=auth")
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+	if !strings.Contains(html, "Search results for") {
+		t.Error("search results page must show 'Search results for' heading")
+	}
+	if !strings.Contains(html, "auth") {
+		t.Error("search results heading must include the query term")
+	}
+	if strings.Contains(html, "Recent") && strings.Contains(html, "Documents") {
+		t.Error("search results page must not show 'Recent Documents' heading")
+	}
+}
+
+func TestHomeSearchEmptyState(t *testing.T) {
+	ts, db := newTestServer(t)
+	ctx := context.Background()
+	db.Create(ctx, server.Document{Title: "Hello world", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, ts.URL+"/?q=nomatch")
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+	if !strings.Contains(html, "No results") {
+		t.Error("empty search must show 'No results'")
+	}
+	if !strings.Contains(html, "nomatch") {
+		t.Error("empty search state must display the query")
+	}
+	if strings.Contains(html, "No documents yet") {
+		t.Error("empty search must not show the default 'No documents yet' empty state")
+	}
+	if strings.Contains(html, "How it works") {
+		t.Error("empty search must not show the 'How it works' steps section")
+	}
+}
+
+func TestHomeSearchPaginationHidden(t *testing.T) {
+	ts, db := newTestServer(t)
+	ctx := context.Background()
+	db.Create(ctx, server.Document{Title: "Auth flow guide", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, ts.URL+"/?q=auth")
+	defer resp.Body.Close()
+	html := readBody(t, resp)
+	if strings.Contains(html, "load-more-btn") {
+		t.Error("search results page must not show the load-more pagination button")
 	}
 }
 

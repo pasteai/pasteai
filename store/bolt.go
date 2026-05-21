@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -245,6 +246,48 @@ func (s *BoltStore) Delete(_ context.Context, id string) error {
 		timeKey := makeTimeKey(doc.CreatedAt, doc.ID)
 		return tx.Bucket(bucketByTime).Delete(timeKey)
 	})
+}
+
+func (s *BoltStore) Search(_ context.Context, opts server.SearchOptions) ([]server.Document, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	q := strings.ToLower(opts.Query)
+	var docs []server.Document
+
+	err := s.db.View(func(tx *bolt.Tx) error {
+		timeBucket := tx.Bucket(bucketByTime)
+		docBucket := tx.Bucket(bucketDocs)
+		c := timeBucket.Cursor()
+
+		for k, v := c.Last(); k != nil && len(docs) < limit; k, v = c.Prev() {
+			id := string(v)
+			data := docBucket.Get([]byte(id))
+			if data == nil {
+				continue
+			}
+			var doc server.Document
+			if err := json.Unmarshal(data, &doc); err != nil {
+				log.Printf("bolt: skipping corrupt document %q: %v", id, err)
+				continue
+			}
+			visible := false
+			if opts.OwnerID != "" {
+				visible = doc.OwnerID == opts.OwnerID
+			} else {
+				visible = doc.Visibility == server.VisibilityPublic
+			}
+			if visible && strings.Contains(strings.ToLower(doc.Title), q) {
+				docs = append(docs, doc)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return docs, nil
 }
 
 // makeTimeKey builds an 8-byte big-endian nanosecond timestamp followed by the doc ID.

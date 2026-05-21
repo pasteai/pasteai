@@ -31,6 +31,7 @@ type EventListener interface {
 type Store interface {
 	Create(ctx context.Context, doc Document) (*Document, error)
 	List(ctx context.Context, opts ListOptions) (*ListResult, error)
+	Search(ctx context.Context, opts SearchOptions) ([]Document, error)
 	Get(ctx context.Context, id string) (*Document, error)
 	// Update overwrites non-empty title only. Content is managed by ContentBackend.
 	Update(ctx context.Context, id, title string) (*Document, error)

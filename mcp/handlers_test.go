@@ -440,6 +440,92 @@ func TestHandleDeleteServerError(t *testing.T) {
 	}
 }
 
+// ── handleSearch ───────────────────────────────────────────
+
+func TestHandleSearchSuccess(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/search" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("q") != "auth" {
+			t.Errorf("q = %q, want auth", r.URL.Query().Get("q"))
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"documents": []map[string]any{
+				{"id": "1", "title": "Auth flow guide", "url": "http://x/d/1", "author": "Claude"},
+			},
+		})
+	}))
+
+	tr, err := s.handleSearch(context.Background(), makeReq(map[string]any{"query": "auth"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Errorf("expected success, got error: %s", resultText(t, tr))
+	}
+	text := resultText(t, tr)
+	if !strings.Contains(text, "Auth flow guide") {
+		t.Errorf("expected title in result: %s", text)
+	}
+	if !strings.Contains(text, "auth") {
+		t.Errorf("expected query in result summary: %s", text)
+	}
+}
+
+func TestHandleSearchMissingQuery(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("HTTP should not be called for missing query")
+	}))
+
+	tr, err := s.handleSearch(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for missing query")
+	}
+}
+
+func TestHandleSearchNoResults(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"documents": []any{}})
+	}))
+
+	tr, err := s.handleSearch(context.Background(), makeReq(map[string]any{"query": "nomatch"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Errorf("expected success on empty results: %s", resultText(t, tr))
+	}
+	text := resultText(t, tr)
+	if !strings.Contains(text, "No documents") {
+		t.Errorf("expected empty message: %s", text)
+	}
+	if !strings.Contains(text, "nomatch") {
+		t.Errorf("expected query in empty message: %s", text)
+	}
+}
+
+func TestHandleSearchServerError(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "db error"})
+	}))
+
+	tr, err := s.handleSearch(context.Background(), makeReq(map[string]any{"query": "x"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for 500")
+	}
+	if !strings.Contains(resultText(t, tr), "db error") {
+		t.Errorf("expected error message in result: %s", resultText(t, tr))
+	}
+}
+
 // ── New / HTTPClient option ────────────────────────────────
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
