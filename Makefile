@@ -5,7 +5,7 @@ VERSION     := $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 BUILD_FLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 GOBIN       := $(shell go env GOPATH)/bin
 
-.PHONY: build install setup run test test-integration test-install test-all lint clean docker-restart release-dry-run help
+.PHONY: build install setup run test test-integration test-install test-all lint clean docker-restart release-dry-run dev-binary installed-binary help
 
 ## help: show this help
 help:
@@ -39,6 +39,16 @@ setup: install
 	[ -n "$$_url"  ] && set -- "$$@" -url "$$_url"; \
 	[ -n "$$_key"  ] && set -- "$$@" -api-key "$$_key"; \
 	"$$@"
+
+## dev-binary: build and point ~/.claude.json at the dev binary in this directory
+dev-binary: build
+	@python3 -c "import json,pathlib; p=pathlib.Path.home()/'.claude.json'; d=json.loads(p.read_text()); d['mcpServers']['pasteai']['command']='$(CURDIR)/$(BINARY)'; p.write_text(json.dumps(d,indent=2)+'\n'); print('✓ MCP now uses $(CURDIR)/$(BINARY)')"
+
+INSTALLED_BINARY := $(shell which $(BINARY) 2>/dev/null || echo $(GOBIN)/$(BINARY))
+
+## installed-binary: restore ~/.claude.json to point at the installed binary
+installed-binary:
+	@python3 -c "import json,pathlib; p=pathlib.Path.home()/'.claude.json'; d=json.loads(p.read_text()); d['mcpServers']['pasteai']['command']='$(INSTALLED_BINARY)'; p.write_text(json.dumps(d,indent=2)+'\n'); print('✓ MCP now uses $(INSTALLED_BINARY)')"
 
 ## run: build and start the server on :8080
 run: build
