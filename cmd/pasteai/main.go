@@ -126,7 +126,7 @@ func printUsage() {
 
 Usage:
   pasteai setup [-mode automatic|manual|remote] [-url URL] [-api-key KEY]
-                  Configure MCP in ~/.claude.json
+                  Configure MCP in Claude Code, Kiro, and opencode
   pasteai doctor  Diagnose common setup problems
   pasteai serve [flags]   Start the web server
   pasteai mcp             Start the MCP server (reads PASTEAI_URL env var)

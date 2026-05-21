@@ -402,6 +402,251 @@ func TestDoctorRestartHint(t *testing.T) {
 	}
 }
 
+// --- Kiro tests ---
+
+func getKiroEntryUnit(t *testing.T, cfg map[string]any) map[string]any {
+	t.Helper()
+	servers, ok := cfg["mcpServers"].(map[string]any)
+	if !ok {
+		t.Fatal("mcpServers key missing or wrong type")
+	}
+	entry, ok := servers["pasteai"].(map[string]any)
+	if !ok {
+		t.Fatal("pasteai entry missing or wrong type")
+	}
+	return entry
+}
+
+func TestKiroMergeEmbedded(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp.json")
+
+	action, err := mergeClaudeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != "Added" {
+		t.Errorf("action = %s, want Added", action)
+	}
+	entry := getKiroEntryUnit(t, readJSONFile(t, path))
+	if entry["command"] != "/fake/pasteai" {
+		t.Errorf("command = %v", entry["command"])
+	}
+	if _, hasEnv := entry["env"]; hasEnv {
+		t.Error("embedded mode should have no env block")
+	}
+}
+
+func TestKiroMergeRemote(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp.json")
+
+	_, err := mergeClaudeJSON(path, "/fake/pasteai", modeRemote, "https://pasteai.io", "mykey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getKiroEntryUnit(t, readJSONFile(t, path))
+	env, ok := entry["env"].(map[string]any)
+	if !ok {
+		t.Fatal("remote mode must have env block")
+	}
+	if env["PASTEAI_URL"] != "https://pasteai.io" {
+		t.Errorf("PASTEAI_URL = %v", env["PASTEAI_URL"])
+	}
+	if env["PASTEAI_API_KEY"] != "mykey" {
+		t.Errorf("PASTEAI_API_KEY = %v", env["PASTEAI_API_KEY"])
+	}
+}
+
+func TestKiroDirCreated(t *testing.T) {
+	dir := t.TempDir()
+	// Nested path that doesn't exist yet — mergeClaudeJSON must create it.
+	path := filepath.Join(dir, ".kiro", "settings", "mcp.json")
+
+	_, err := mergeClaudeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	if err != nil {
+		t.Fatalf("expected parent dirs to be created: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Error("mcp.json should exist after merge")
+	}
+}
+
+// --- opencode tests ---
+
+func getOpenCodeEntryUnit(t *testing.T, cfg map[string]any) map[string]any {
+	t.Helper()
+	mcp, ok := cfg["mcp"].(map[string]any)
+	if !ok {
+		t.Fatal("mcp key missing or wrong type")
+	}
+	entry, ok := mcp["pasteai"].(map[string]any)
+	if !ok {
+		t.Fatal("pasteai entry missing or wrong type")
+	}
+	return entry
+}
+
+func TestOpenCodeMergeEmbedded(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	action, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != "Added" {
+		t.Errorf("action = %s, want Added", action)
+	}
+	entry := getOpenCodeEntryUnit(t, readJSONFile(t, path))
+	if entry["type"] != "local" {
+		t.Errorf("type = %v, want local", entry["type"])
+	}
+	cmd, _ := entry["command"].([]any)
+	if len(cmd) < 2 || cmd[0] != "/fake/pasteai" || cmd[1] != "mcp" {
+		t.Errorf("command = %v, want [\"/fake/pasteai\", \"mcp\"]", cmd)
+	}
+	if _, hasEnv := entry["environment"]; hasEnv {
+		t.Error("embedded mode should have no environment block")
+	}
+}
+
+func TestOpenCodeMergeLocal(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	_, err := mergeOpencodeJSON(path, "/fake/pasteai", modeLocal, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getOpenCodeEntryUnit(t, readJSONFile(t, path))
+	env, ok := entry["environment"].(map[string]any)
+	if !ok {
+		t.Fatalf("local mode must have environment block, got %v", entry)
+	}
+	if env["PASTEAI_URL"] != "http://localhost:8080" {
+		t.Errorf("PASTEAI_URL = %v", env["PASTEAI_URL"])
+	}
+}
+
+func TestOpenCodeMergeRemoteWithKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	_, err := mergeOpencodeJSON(path, "/fake/pasteai", modeRemote, "https://pasteai.io", "mykey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getOpenCodeEntryUnit(t, readJSONFile(t, path))
+	env, ok := entry["environment"].(map[string]any)
+	if !ok {
+		t.Fatal("remote mode must have environment block")
+	}
+	if env["PASTEAI_URL"] != "https://pasteai.io" {
+		t.Errorf("PASTEAI_URL = %v", env["PASTEAI_URL"])
+	}
+	if env["PASTEAI_API_KEY"] != "mykey" {
+		t.Errorf("PASTEAI_API_KEY = %v", env["PASTEAI_API_KEY"])
+	}
+}
+
+func TestOpenCodeMergeRemoteNoKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	_, err := mergeOpencodeJSON(path, "/fake/pasteai", modeRemote, "https://pasteai.io", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getOpenCodeEntryUnit(t, readJSONFile(t, path))
+	env, ok := entry["environment"].(map[string]any)
+	if !ok {
+		t.Fatal("remote mode must have environment block")
+	}
+	if _, hasKey := env["PASTEAI_API_KEY"]; hasKey {
+		t.Error("PASTEAI_API_KEY should be absent when not provided")
+	}
+}
+
+func TestOpenCodePreservesOtherKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	existing := map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"mcp": map[string]any{
+			"other-tool": map[string]any{"type": "local", "command": []any{"other"}},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(path, append(data, '\n'), 0600)
+
+	_, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := readJSONFile(t, path)
+	if result["$schema"] == nil {
+		t.Error("$schema key was removed")
+	}
+	mcp := result["mcp"].(map[string]any)
+	if _, ok := mcp["other-tool"]; !ok {
+		t.Error("other-tool was removed")
+	}
+	if _, ok := mcp["pasteai"]; !ok {
+		t.Error("pasteai was not added")
+	}
+}
+
+func TestOpenCodeMergeIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	if _, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := os.ReadFile(path)
+
+	if _, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := os.ReadFile(path)
+
+	if !bytes.Equal(first, second) {
+		t.Errorf("idempotency failure:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+func TestOpenCodeUpdatedAction(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	if _, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	action, err := mergeOpencodeJSON(path, "/fake/pasteai", modeRemote, "https://pasteai.io", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != "Updated" {
+		t.Errorf("action = %s, want Updated", action)
+	}
+}
+
+func TestOpenCodeDirCreated(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".config", "opencode", "opencode.json")
+
+	_, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	if err != nil {
+		t.Fatalf("expected parent dirs to be created: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Error("opencode.json should exist after merge")
+	}
+}
+
 // --- Binary path tests ---
 
 func TestSelfPathHomebrew(t *testing.T) {

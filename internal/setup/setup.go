@@ -53,7 +53,7 @@ func Run(args []string) error {
 	flagMode := fs.String("mode", "", "How PasteAI should run: automatic, manual, or remote")
 	flagURL := fs.String("url", "", "Server URL (required when mode=remote)")
 	flagAPIKey := fs.String("api-key", "", "API key (optional, for mode=remote)")
-	flagBinary := fs.String("binary", "", "Override binary path written to ~/.claude.json")
+	flagBinary := fs.String("binary", "", "Override binary path written to config files")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -101,14 +101,14 @@ func Run(args []string) error {
 	}
 
 	if os.Getuid() == 0 && os.Getenv("SUDO_USER") != "" {
-		fmt.Fprintf(os.Stderr, "warning: running as root; ~/.claude.json will be written to root's home directory.\nIf you meant to configure for user %q, run without sudo.\n", os.Getenv("SUDO_USER"))
+		fmt.Fprintf(os.Stderr, "warning: running as root; config files will be written to root's home directory.\nIf you meant to configure for user %q, run without sudo.\n", os.Getenv("SUDO_USER"))
 	}
 
+	// Claude Code — primary; fail hard if it can't be written.
 	cfgPath, err := claudeJSONPath()
 	if err != nil {
 		return err
 	}
-
 	action, err := mergeClaudeJSON(cfgPath, binaryPath, internalMode, url, apiKey)
 	if err != nil {
 		fallback := map[string]any{"mcpServers": map[string]any{"pasteai": buildEntry(binaryPath, internalMode, url, apiKey)}}
@@ -116,20 +116,38 @@ func Run(args []string) error {
 		fmt.Fprintf(os.Stderr, "✗ Could not write %s: %v\n  Add this to ~/.claude.json manually:\n  %s\n", cfgPath, err, fb)
 		return err
 	}
+	fmt.Printf("✓ %s pasteai in %s (Claude Code, mode: %s)\n", action, cfgPath, userLabel(internalMode))
 
-	fmt.Printf("✓ %s pasteai to %s (mode: %s)\n\n", action, cfgPath, userLabel(internalMode))
-	fmt.Print("Next steps:\n")
+	// Kiro — same mcpServers format as Claude Code.
+	if kiroPath, kiroErr := kiroJSONPath(); kiroErr == nil {
+		if kiroAction, kiroErr := mergeClaudeJSON(kiroPath, binaryPath, internalMode, url, apiKey); kiroErr != nil {
+			fmt.Fprintf(os.Stderr, "✗ Could not write %s: %v\n", kiroPath, kiroErr)
+		} else {
+			fmt.Printf("✓ %s pasteai in %s (Kiro, mode: %s)\n", kiroAction, kiroPath, userLabel(internalMode))
+		}
+	}
+
+	// opencode — uses {"mcp": {...}} with a different entry shape.
+	if opencodePath, opencodeErr := opencodeConfigPath(); opencodeErr == nil {
+		if opencodeAction, opencodeErr := mergeOpencodeJSON(opencodePath, binaryPath, internalMode, url, apiKey); opencodeErr != nil {
+			fmt.Fprintf(os.Stderr, "✗ Could not write %s: %v\n", opencodePath, opencodeErr)
+		} else {
+			fmt.Printf("✓ %s pasteai in %s (opencode, mode: %s)\n", opencodeAction, opencodePath, userLabel(internalMode))
+		}
+	}
+
+	fmt.Print("\nNext steps:\n")
 	if internalMode == modeLocal {
 		fmt.Print("  1. Start the server now:   pasteai serve\n")
 		fmt.Print("     (Keep this terminal open, or set up autostart:\n")
 		fmt.Print("      https://github.com/pasteai/pasteai/blob/main/docs/server-setup.md)\n")
-		fmt.Print("  2. Quit Claude Code completely and reopen it\n")
-		fmt.Print("  3. Say this to Claude: \"Write a short summary and publish it as a PasteAI document\"\n")
-		fmt.Print("     Claude will give you a link — that means it's working.\n")
+		fmt.Print("  2. Quit and reopen your AI editor\n")
+		fmt.Print("  3. Say: \"Write a short summary and publish it as a PasteAI document\"\n")
+		fmt.Print("     You'll get a link — that means it's working.\n")
 	} else {
-		fmt.Print("  1. Quit Claude Code completely and reopen it\n")
-		fmt.Print("  2. Say this to Claude: \"Write a short summary and publish it as a PasteAI document\"\n")
-		fmt.Print("     Claude will give you a link — that means it's working.\n")
+		fmt.Print("  1. Quit and reopen your AI editor\n")
+		fmt.Print("  2. Say: \"Write a short summary and publish it as a PasteAI document\"\n")
+		fmt.Print("     You'll get a link — that means it's working.\n")
 	}
 	fmt.Print("\nIf something seems wrong, run: pasteai doctor\n")
 
@@ -262,6 +280,79 @@ func claudeJSONPath() (string, error) {
 	return filepath.Join(home, ".claude.json"), nil
 }
 
+// kiroJSONPath returns ~/.kiro/settings/mcp.json.
+// Kiro uses the same mcpServers format as Claude Code.
+func kiroJSONPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("getting home directory: %w", err)
+	}
+	return filepath.Join(home, ".kiro", "settings", "mcp.json"), nil
+}
+
+// opencodeConfigPath returns the opencode config file path.
+// Respects XDG_CONFIG_HOME; defaults to ~/.config/opencode/opencode.json.
+func opencodeConfigPath() (string, error) {
+	configDir := os.Getenv("XDG_CONFIG_HOME")
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("getting home directory: %w", err)
+		}
+		configDir = filepath.Join(home, ".config")
+	}
+	return filepath.Join(configDir, "opencode", "opencode.json"), nil
+}
+
+// buildOpenCodeEntry builds the opencode MCP entry format.
+// opencode uses {"type":"local","command":[binary,args...],"environment":{...}}
+// rather than the standard {"command":binary,"args":[...],"env":{...}}.
+func buildOpenCodeEntry(binaryPath, mode, url, apiKey string) map[string]any {
+	entry := map[string]any{
+		"type":    "local",
+		"command": []string{binaryPath, "mcp"},
+	}
+	switch mode {
+	case modeLocal:
+		entry["environment"] = map[string]any{
+			"PASTEAI_URL": "http://localhost:8080",
+		}
+	case modeRemote:
+		env := map[string]any{"PASTEAI_URL": url}
+		if apiKey != "" {
+			env["PASTEAI_API_KEY"] = apiKey
+		}
+		entry["environment"] = env
+	}
+	return entry
+}
+
+// mergeOpencodeJSON writes the pasteai entry into the opencode config file.
+// opencode uses {"mcp": {"pasteai": {...}}} rather than {"mcpServers": {"pasteai": {...}}}.
+func mergeOpencodeJSON(cfgPath, binaryPath, mode, url, apiKey string) (string, error) {
+	cfg, err := readClaudeJSON(cfgPath)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", cfgPath, err)
+	}
+
+	mcp, _ := cfg["mcp"].(map[string]any)
+	if mcp == nil {
+		mcp = map[string]any{}
+	}
+
+	action := "Added"
+	if _, exists := mcp["pasteai"]; exists {
+		action = "Updated"
+	}
+	mcp["pasteai"] = buildOpenCodeEntry(binaryPath, mode, url, apiKey)
+	cfg["mcp"] = mcp
+
+	if err := writeClaudeJSON(cfgPath, cfg); err != nil {
+		return "", err
+	}
+	return action, nil
+}
+
 func readClaudeJSON(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -288,7 +379,10 @@ func writeClaudeJSON(path string, cfg map[string]any) error {
 	// Write to a temp file in the same directory then rename for atomicity.
 	// A crash between truncate and write would otherwise corrupt the file.
 	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, ".claude.json.tmp*")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".pasteai.tmp*")
 	if err != nil {
 		return err
 	}
