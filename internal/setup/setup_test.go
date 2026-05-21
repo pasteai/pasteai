@@ -237,6 +237,111 @@ func TestMergeModeSwitch(t *testing.T) {
 	}
 }
 
+func TestMergePreservesExtraEntryFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude.json")
+
+	existing := map[string]any{
+		"mcpServers": map[string]any{
+			"pasteai": map[string]any{
+				"command":    "/old/pasteai",
+				"args":       []any{"mcp"},
+				"user_field": "keep-me",
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(path, append(data, '\n'), 0600)
+
+	_, err := mergeClaudeJSON(path, "/new/pasteai", modeEmbedded, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getPasteaiEntryUnit(t, readJSONFile(t, path))
+	if entry["command"] != "/new/pasteai" {
+		t.Errorf("command not updated: %v", entry["command"])
+	}
+	if entry["user_field"] != "keep-me" {
+		t.Errorf("user_field was removed: %v", entry)
+	}
+}
+
+func TestMergePreservesUserEnvVars(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude.json")
+
+	existing := map[string]any{
+		"mcpServers": map[string]any{
+			"pasteai": map[string]any{
+				"command": "/old/pasteai",
+				"args":    []any{"mcp"},
+				"env": map[string]any{
+					"PASTEAI_URL":    "http://old:8080",
+					"MY_CUSTOM_FLAG": "yes",
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(path, append(data, '\n'), 0600)
+
+	_, err := mergeClaudeJSON(path, "/new/pasteai", modeLocal, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getPasteaiEntryUnit(t, readJSONFile(t, path))
+	env, ok := entry["env"].(map[string]any)
+	if !ok {
+		t.Fatal("env block missing")
+	}
+	if env["PASTEAI_URL"] != "http://localhost:8080" {
+		t.Errorf("PASTEAI_URL not updated: %v", env["PASTEAI_URL"])
+	}
+	if env["MY_CUSTOM_FLAG"] != "yes" {
+		t.Errorf("MY_CUSTOM_FLAG was removed: %v", env)
+	}
+}
+
+func TestMergeSwitchToEmbeddedRemovesURLKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude.json")
+
+	existing := map[string]any{
+		"mcpServers": map[string]any{
+			"pasteai": map[string]any{
+				"command": "/old/pasteai",
+				"args":    []any{"mcp"},
+				"env": map[string]any{
+					"PASTEAI_URL":     "https://remote.example.com",
+					"PASTEAI_API_KEY": "secret",
+					"MY_CUSTOM_FLAG":  "yes",
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(path, append(data, '\n'), 0600)
+
+	_, err := mergeClaudeJSON(path, "/new/pasteai", modeEmbedded, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getPasteaiEntryUnit(t, readJSONFile(t, path))
+	env, ok := entry["env"].(map[string]any)
+	if !ok {
+		t.Fatal("env block missing (expected because MY_CUSTOM_FLAG survived)")
+	}
+	if _, has := env["PASTEAI_URL"]; has {
+		t.Error("PASTEAI_URL should be removed when switching to embedded")
+	}
+	if _, has := env["PASTEAI_API_KEY"]; has {
+		t.Error("PASTEAI_API_KEY should be removed when switching to embedded")
+	}
+	if env["MY_CUSTOM_FLAG"] != "yes" {
+		t.Errorf("MY_CUSTOM_FLAG was removed: %v", env)
+	}
+}
+
 // --- Atomicity tests ---
 
 func TestValidationBeforeWrite_RemoteNoURL(t *testing.T) {
@@ -631,6 +736,112 @@ func TestOpenCodeUpdatedAction(t *testing.T) {
 	}
 	if action != "Updated" {
 		t.Errorf("action = %s, want Updated", action)
+	}
+}
+
+func TestOpenCodePreservesExtraEntryFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	existing := map[string]any{
+		"mcp": map[string]any{
+			"pasteai": map[string]any{
+				"type":       "local",
+				"command":    []any{"/old/pasteai", "mcp"},
+				"user_field": "keep-me",
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(path, append(data, '\n'), 0600)
+
+	_, err := mergeOpencodeJSON(path, "/new/pasteai", modeEmbedded, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getOpenCodeEntryUnit(t, readJSONFile(t, path))
+	cmd, _ := entry["command"].([]any)
+	if len(cmd) == 0 || cmd[0] != "/new/pasteai" {
+		t.Errorf("command not updated: %v", entry["command"])
+	}
+	if entry["user_field"] != "keep-me" {
+		t.Errorf("user_field was removed: %v", entry)
+	}
+}
+
+func TestOpenCodePreservesUserEnvVars(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	existing := map[string]any{
+		"mcp": map[string]any{
+			"pasteai": map[string]any{
+				"type":    "local",
+				"command": []any{"/old/pasteai", "mcp"},
+				"environment": map[string]any{
+					"PASTEAI_URL":    "http://old:8080",
+					"MY_CUSTOM_FLAG": "yes",
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(path, append(data, '\n'), 0600)
+
+	_, err := mergeOpencodeJSON(path, "/new/pasteai", modeLocal, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getOpenCodeEntryUnit(t, readJSONFile(t, path))
+	env, ok := entry["environment"].(map[string]any)
+	if !ok {
+		t.Fatal("environment block missing")
+	}
+	if env["PASTEAI_URL"] != "http://localhost:8080" {
+		t.Errorf("PASTEAI_URL not updated: %v", env["PASTEAI_URL"])
+	}
+	if env["MY_CUSTOM_FLAG"] != "yes" {
+		t.Errorf("MY_CUSTOM_FLAG was removed: %v", env)
+	}
+}
+
+func TestOpenCodeSwitchToEmbeddedRemovesURLKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	existing := map[string]any{
+		"mcp": map[string]any{
+			"pasteai": map[string]any{
+				"type":    "local",
+				"command": []any{"/old/pasteai", "mcp"},
+				"environment": map[string]any{
+					"PASTEAI_URL":     "https://remote.example.com",
+					"PASTEAI_API_KEY": "secret",
+					"MY_CUSTOM_FLAG":  "yes",
+				},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(path, append(data, '\n'), 0600)
+
+	_, err := mergeOpencodeJSON(path, "/new/pasteai", modeEmbedded, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getOpenCodeEntryUnit(t, readJSONFile(t, path))
+	env, ok := entry["environment"].(map[string]any)
+	if !ok {
+		t.Fatal("environment block missing (expected because MY_CUSTOM_FLAG survived)")
+	}
+	if _, has := env["PASTEAI_URL"]; has {
+		t.Error("PASTEAI_URL should be removed when switching to embedded")
+	}
+	if _, has := env["PASTEAI_API_KEY"]; has {
+		t.Error("PASTEAI_API_KEY should be removed when switching to embedded")
+	}
+	if env["MY_CUSTOM_FLAG"] != "yes" {
+		t.Errorf("MY_CUSTOM_FLAG was removed: %v", env)
 	}
 }
 

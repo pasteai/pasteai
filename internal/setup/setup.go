@@ -111,7 +111,7 @@ func Run(args []string) error {
 	}
 	action, err := mergeClaudeJSON(cfgPath, binaryPath, internalMode, url, apiKey)
 	if err != nil {
-		fallback := map[string]any{"mcpServers": map[string]any{"pasteai": buildEntry(binaryPath, internalMode, url, apiKey)}}
+		fallback := map[string]any{"mcpServers": map[string]any{"pasteai": mergeEntry(nil, binaryPath, internalMode, url, apiKey)}}
 		fb, _ := json.Marshal(fallback)
 		fmt.Fprintf(os.Stderr, "✗ Could not write %s: %v\n  Add this to ~/.claude.json manually:\n  %s\n", cfgPath, err, fb)
 		return err
@@ -166,11 +166,12 @@ func mergeClaudeJSON(cfgPath, binaryPath, mode, url, apiKey string) (string, err
 		servers = map[string]any{}
 	}
 
+	existing, _ := servers["pasteai"].(map[string]any)
 	action := "Added"
-	if _, exists := servers["pasteai"]; exists {
+	if existing != nil {
 		action = "Updated"
 	}
-	servers["pasteai"] = buildEntry(binaryPath, mode, url, apiKey)
+	servers["pasteai"] = mergeEntry(existing, binaryPath, mode, url, apiKey)
 	cfg["mcpServers"] = servers
 
 	if err := writeClaudeJSON(cfgPath, cfg); err != nil {
@@ -179,24 +180,40 @@ func mergeClaudeJSON(cfgPath, binaryPath, mode, url, apiKey string) (string, err
 	return action, nil
 }
 
-func buildEntry(binaryPath, mode, url, apiKey string) map[string]any {
-	entry := map[string]any{
-		"command": binaryPath,
-		"args":    []string{"mcp"},
-	}
+// mergeEntry builds a Claude Code / Kiro MCP entry, preserving any fields or
+// env vars the user added that setup does not own.
+func mergeEntry(existing map[string]any, binaryPath, mode, url, apiKey string) map[string]any {
+	entry := cloneMap(existing)
+	entry["command"] = binaryPath
+	entry["args"] = []string{"mcp"}
+
+	existingEnv, _ := existing["env"].(map[string]any)
+	env := cloneMap(existingEnv)
+	delete(env, "PASTEAI_URL")
+	delete(env, "PASTEAI_API_KEY")
 	switch mode {
 	case modeLocal:
-		entry["env"] = map[string]any{
-			"PASTEAI_URL": "http://localhost:8080",
-		}
+		env["PASTEAI_URL"] = "http://localhost:8080"
 	case modeRemote:
-		env := map[string]any{"PASTEAI_URL": url}
+		env["PASTEAI_URL"] = url
 		if apiKey != "" {
 			env["PASTEAI_API_KEY"] = apiKey
 		}
+	}
+	if len(env) > 0 {
 		entry["env"] = env
+	} else {
+		delete(entry, "env")
 	}
 	return entry
+}
+
+func cloneMap(m map[string]any) map[string]any {
+	result := make(map[string]any, len(m))
+	for k, v := range m {
+		result[k] = v
+	}
+	return result
 }
 
 func promptUser(tty *os.File) (mode, url, key string, err error) {
@@ -304,25 +321,32 @@ func opencodeConfigPath() (string, error) {
 	return filepath.Join(configDir, "opencode", "opencode.json"), nil
 }
 
-// buildOpenCodeEntry builds the opencode MCP entry format.
+// mergeOpenCodeEntry builds an opencode MCP entry, preserving any fields or
+// environment vars the user added that setup does not own.
 // opencode uses {"type":"local","command":[binary,args...],"environment":{...}}
 // rather than the standard {"command":binary,"args":[...],"env":{...}}.
-func buildOpenCodeEntry(binaryPath, mode, url, apiKey string) map[string]any {
-	entry := map[string]any{
-		"type":    "local",
-		"command": []string{binaryPath, "mcp"},
-	}
+func mergeOpenCodeEntry(existing map[string]any, binaryPath, mode, url, apiKey string) map[string]any {
+	entry := cloneMap(existing)
+	entry["type"] = "local"
+	entry["command"] = []string{binaryPath, "mcp"}
+
+	existingEnv, _ := existing["environment"].(map[string]any)
+	env := cloneMap(existingEnv)
+	delete(env, "PASTEAI_URL")
+	delete(env, "PASTEAI_API_KEY")
 	switch mode {
 	case modeLocal:
-		entry["environment"] = map[string]any{
-			"PASTEAI_URL": "http://localhost:8080",
-		}
+		env["PASTEAI_URL"] = "http://localhost:8080"
 	case modeRemote:
-		env := map[string]any{"PASTEAI_URL": url}
+		env["PASTEAI_URL"] = url
 		if apiKey != "" {
 			env["PASTEAI_API_KEY"] = apiKey
 		}
+	}
+	if len(env) > 0 {
 		entry["environment"] = env
+	} else {
+		delete(entry, "environment")
 	}
 	return entry
 }
@@ -340,11 +364,12 @@ func mergeOpencodeJSON(cfgPath, binaryPath, mode, url, apiKey string) (string, e
 		mcp = map[string]any{}
 	}
 
+	existing, _ := mcp["pasteai"].(map[string]any)
 	action := "Added"
-	if _, exists := mcp["pasteai"]; exists {
+	if existing != nil {
 		action = "Updated"
 	}
-	mcp["pasteai"] = buildOpenCodeEntry(binaryPath, mode, url, apiKey)
+	mcp["pasteai"] = mergeOpenCodeEntry(existing, binaryPath, mode, url, apiKey)
 	cfg["mcp"] = mcp
 
 	if err := writeClaudeJSON(cfgPath, cfg); err != nil {
