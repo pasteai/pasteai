@@ -1001,7 +1001,69 @@ button.nav-link {
 .doc-header .doc-meta {
   font-size: 0.875rem;
   color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
+
+/* ── Visibility badge ────────────────────────────────────── */
+
+.doc-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.67rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.15em 0.55em;
+  border-radius: 999px;
+  border: 1px solid;
+  line-height: 1.6;
+}
+.doc-badge--public {
+  color: var(--color-secondary);
+  border-color: color-mix(in srgb, var(--color-secondary) 35%, transparent);
+  background: color-mix(in srgb, var(--color-secondary) 10%, transparent);
+}
+.doc-badge--unlisted {
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+  background: var(--color-surface-interactive);
+}
+.doc-badge--private {
+  color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+
+/* ── TTL countdown ───────────────────────────────────────── */
+
+.ttl-countdown {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+}
+.ttl-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 0.75rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 6px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s, visibility 0.15s;
+  pointer-events: none;
+  z-index: 20;
+}
+.ttl-countdown:hover .ttl-tooltip { opacity: 1; visibility: visible; }
 
 /* ── Markdown Body ───────────────────────────────────────── */
 

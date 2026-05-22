@@ -166,6 +166,10 @@ func (s *srv) handleViewRaw(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	if doc.Visibility == VisibilityPrivate && ownerFromCtx(r.Context()) != doc.OwnerID {
+		http.NotFound(w, r)
+		return
+	}
 	raw, err := s.content.Get(r.Context(), id)
 	if err != nil {
 		s.serverError(w, err)
@@ -216,6 +220,10 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ownerID := ownerFromCtx(r.Context())
+	if doc.Visibility == VisibilityPrivate && ownerID != doc.OwnerID {
+		s.renderNotFound(w)
+		return
+	}
 	s.notify(r.Context(), DocumentViewed, ownerID, doc.ID)
 	s.renderWith(w, s.documentTmpl, documentData{
 		Document:             *doc,
@@ -508,6 +516,10 @@ func (s *srv) handleGetDocument(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.serverError(w, err)
+		return
+	}
+	if doc.Visibility == VisibilityPrivate && ownerFromCtx(r.Context()) != doc.OwnerID {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
 	raw, err := s.content.Get(r.Context(), id)

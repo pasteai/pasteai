@@ -47,7 +47,9 @@
           </button>
         </div>
         <div class="doc-meta">
-          {{if .Document.Author}}by {{.Document.Author}} &middot; {{end}}{{.Document.CreatedAt.Format "January 2, 2006 at 15:04 UTC"}}
+          {{if .Document.Author}}<span>by {{.Document.Author}}</span><span>&middot;</span>{{end}}<span>{{.Document.CreatedAt.Format "January 2, 2006 at 15:04 UTC"}}</span>
+          <span>&middot;</span><span class="doc-badge doc-badge--{{.Document.Visibility}}">{{.Document.Visibility}}</span>
+          {{if .Document.ExpiresAt}}<span>&middot;</span><span class="ttl-countdown" id="ttl-countdown" data-expires="{{.Document.ExpiresAt.Format "2006-01-02T15:04:05Z"}}"><span class="ttl-tooltip">Sign in to keep docs for up to 180 days</span><span id="ttl-text">Expires soon</span></span>{{end}}
         </div>
       </header>
       <article class="markdown-body">
@@ -201,6 +203,26 @@
     }, { rootMargin: '-10% 0px -80% 0px' });
 
     headings.forEach(function(h) { observer.observe(h); });
+  })();
+
+  // ── TTL countdown ─────────────────────────────────────────
+  (function() {
+    var el = document.getElementById('ttl-countdown');
+    if (!el) return;
+    var expires = new Date(el.dataset.expires);
+    var textEl = document.getElementById('ttl-text');
+    function update() {
+      var diff = expires - Date.now();
+      if (diff <= 0) { textEl.textContent = 'Expired'; return; }
+      var h = Math.floor(diff / 3600000);
+      var m = Math.floor((diff % 3600000) / 60000);
+      var s = Math.floor((diff % 60000) / 1000);
+      if (h > 0) textEl.textContent = 'Expires in ' + h + 'h ' + m + 'm';
+      else if (m > 0) textEl.textContent = 'Expires in ' + m + 'm ' + s + 's';
+      else textEl.textContent = 'Expires in ' + s + 's';
+    }
+    update();
+    setInterval(update, 1000);
   })();
 
   // ── Code block copy buttons ───────────────────────────────
