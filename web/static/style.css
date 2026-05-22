@@ -319,7 +319,6 @@ a:hover {
   letter-spacing: -0.02em;
   color: var(--color-text);
   text-decoration: none;
-  margin-right: auto;
   background: linear-gradient(135deg, var(--hero-gradient-start), var(--hero-gradient-end));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -342,6 +341,7 @@ a:hover {
   text-decoration: none;
   transition: color 0.2s ease;
   line-height: 0;
+  margin-right: auto;
 }
 .nav-icon-link:hover { color: var(--color-text); text-decoration: none; }
 
