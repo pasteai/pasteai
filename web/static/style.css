@@ -1012,29 +1012,30 @@ button.nav-link {
 .doc-badge {
   display: inline-flex;
   align-items: center;
-  font-size: 0.67rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  gap: 0.3em;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
-  padding: 0.15em 0.55em;
+  padding: 0.3em 0.7em;
   border-radius: 999px;
-  border: 1px solid;
-  line-height: 1.6;
+  border: none;
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
+.doc-badge svg { flex-shrink: 0; }
 .doc-badge--public {
-  color: var(--color-secondary);
-  border-color: color-mix(in srgb, var(--color-secondary) 35%, transparent);
-  background: color-mix(in srgb, var(--color-secondary) 10%, transparent);
+  background: var(--color-secondary);
+  color: #fff;
 }
 .doc-badge--unlisted {
-  color: var(--color-text-muted);
-  border-color: var(--color-border);
-  background: var(--color-surface-interactive);
+  background: var(--color-text-muted);
+  color: #fff;
 }
 .doc-badge--private {
-  color: var(--color-primary);
-  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
-  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  background: var(--color-primary);
+  color: #fff;
 }
 
 /* ── TTL countdown ───────────────────────────────────────── */
