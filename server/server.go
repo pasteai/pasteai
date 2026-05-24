@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pasteai/pasteai/internal/diff"
 	"github.com/pasteai/pasteai/internal/renderer"
 	"github.com/pasteai/pasteai/web"
 )
@@ -289,6 +290,9 @@ func (s *srv) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title, content, or visibility required"})
 		return
 	}
+
+	s.saveRevision(r.Context(), id, req.Content)
+
 	doc, err := s.store.Update(r.Context(), id, req.Title)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -503,8 +507,60 @@ func (s *srv) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	// non-fatal: content file may already be gone
 	s.content.Delete(r.Context(), id)
+	if rs, ok := s.store.(RevisionStore); ok {
+		if err := rs.DeleteRevisions(r.Context(), id); err != nil {
+			s.logger.Printf("delete revisions: %v", err)
+		}
+	}
+	if rcb, ok := s.content.(RevisionContentBackend); ok {
+		if err := rcb.DeleteRevisions(r.Context(), id); err != nil {
+			s.logger.Printf("delete revision content: %v", err)
+		}
+	}
 	s.notify(r.Context(), DocumentDeleted, ownerFromCtx(r.Context()), id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// saveRevision captures a snapshot of the document's current state before an update.
+// newContent is the incoming content (may be empty if only title/visibility changed).
+// All errors are logged but do not abort the update — revision saving is best-effort.
+func (s *srv) saveRevision(ctx context.Context, docID, newContent string) {
+	rs, ok := s.store.(RevisionStore)
+	if !ok {
+		return
+	}
+	doc, err := s.store.Get(ctx, docID)
+	if err != nil {
+		s.logger.Printf("saveRevision: get doc: %v", err)
+		return
+	}
+	var currentContent string
+	raw, err := s.content.Get(ctx, docID)
+	if err != nil {
+		s.logger.Printf("saveRevision: get content: %v", err)
+	} else {
+		currentContent = string(raw)
+	}
+
+	added, removed := diff.CountLines(currentContent, newContent)
+	saved, err := rs.SaveRevision(ctx, Revision{
+		DocID:        docID,
+		Title:        doc.Title,
+		Author:       doc.Author,
+		Visibility:   doc.Visibility,
+		SavedAt:      time.Now().UTC(),
+		AddedLines:   added,
+		RemovedLines: removed,
+	})
+	if err != nil {
+		s.logger.Printf("saveRevision: save metadata: %v", err)
+		return
+	}
+	if rcb, ok := s.content.(RevisionContentBackend); ok {
+		if err := rcb.PutRevision(ctx, docID, saved.Num, []byte(currentContent)); err != nil {
+			s.logger.Printf("saveRevision: store content: %v", err)
+		}
+	}
 }
 
 func (s *srv) handleGetDocument(w http.ResponseWriter, r *http.Request) {

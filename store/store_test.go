@@ -604,12 +604,12 @@ func TestSaveAndListRevisions(t *testing.T) {
 	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
 
 	rev1 := makeRevision(doc.ID)
-	if err := s.SaveRevision(ctx, rev1); err != nil {
+	if _, err := s.SaveRevision(ctx, rev1); err != nil {
 		t.Fatalf("SaveRevision: %v", err)
 	}
 	rev2 := makeRevision(doc.ID)
 	rev2.Title = "Updated"
-	if err := s.SaveRevision(ctx, rev2); err != nil {
+	if _, err := s.SaveRevision(ctx, rev2); err != nil {
 		t.Fatalf("SaveRevision: %v", err)
 	}
 
@@ -634,7 +634,7 @@ func TestGetRevision(t *testing.T) {
 	rev := makeRevision(doc.ID)
 	rev.AddedLines = 5
 	rev.RemovedLines = 2
-	_ = s.SaveRevision(ctx, rev)
+	_, _ = s.SaveRevision(ctx, rev)
 
 	got, err := s.GetRevision(ctx, doc.ID, 1)
 	if err != nil {
@@ -660,7 +660,7 @@ func TestRevisionPruning(t *testing.T) {
 
 	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
 	for i := 0; i < 52; i++ {
-		if err := s.SaveRevision(ctx, makeRevision(doc.ID)); err != nil {
+		if _, err := s.SaveRevision(ctx, makeRevision(doc.ID)); err != nil {
 			t.Fatalf("SaveRevision %d: %v", i, err)
 		}
 	}
@@ -683,8 +683,8 @@ func TestDeleteRevisions(t *testing.T) {
 	s := newTestBolt(t)
 
 	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
-	_ = s.SaveRevision(ctx, makeRevision(doc.ID))
-	_ = s.SaveRevision(ctx, makeRevision(doc.ID))
+	_, _ = s.SaveRevision(ctx, makeRevision(doc.ID))
+	_, _ = s.SaveRevision(ctx, makeRevision(doc.ID))
 
 	if err := s.DeleteRevisions(ctx, doc.ID); err != nil {
 		t.Fatalf("DeleteRevisions: %v", err)
@@ -698,7 +698,7 @@ func TestDeleteRevisions(t *testing.T) {
 		t.Errorf("want 0 revisions after delete, got %d", len(revs))
 	}
 	// Sequence reset: next save should start at 1.
-	_ = s.SaveRevision(ctx, makeRevision(doc.ID))
+	_, _ = s.SaveRevision(ctx, makeRevision(doc.ID))
 	revs, _ = s.ListRevisions(ctx, doc.ID)
 	if revs[0].Num != 1 {
 		t.Errorf("want Num=1 after reset, got %d", revs[0].Num)
@@ -711,9 +711,9 @@ func TestRevisionIsolatedByDoc(t *testing.T) {
 
 	doc1, _ := s.Create(ctx, server.Document{Title: "doc1"})
 	doc2, _ := s.Create(ctx, server.Document{Title: "doc2"})
-	_ = s.SaveRevision(ctx, makeRevision(doc1.ID))
-	_ = s.SaveRevision(ctx, makeRevision(doc1.ID))
-	_ = s.SaveRevision(ctx, makeRevision(doc2.ID))
+	_, _ = s.SaveRevision(ctx, makeRevision(doc1.ID))
+	_, _ = s.SaveRevision(ctx, makeRevision(doc1.ID))
+	_, _ = s.SaveRevision(ctx, makeRevision(doc2.ID))
 
 	revs1, _ := s.ListRevisions(ctx, doc1.ID)
 	revs2, _ := s.ListRevisions(ctx, doc2.ID)

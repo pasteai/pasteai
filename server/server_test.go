@@ -226,6 +226,54 @@ func (*alwaysFailStore) UpdateVisibility(_ context.Context, _ string, _ server.V
 func (*alwaysFailStore) Delete(_ context.Context, _ string) error { return errInjected }
 func (*alwaysFailStore) Close() error                             { return nil }
 
+// revisionMemStore wraps memStore and implements RevisionStore for testing.
+type revisionMemStore struct {
+	*memStore
+	revisions []server.Revision
+	deleted   []string
+}
+
+func newRevisionMemStore() *revisionMemStore {
+	return &revisionMemStore{memStore: newMemStore()}
+}
+
+func (r *revisionMemStore) SaveRevision(_ context.Context, rev server.Revision) (*server.Revision, error) {
+	rev.Num = len(r.revisions) + 1
+	r.revisions = append(r.revisions, rev)
+	return &rev, nil
+}
+
+func (r *revisionMemStore) ListRevisions(_ context.Context, docID string) ([]server.Revision, error) {
+	var out []server.Revision
+	for i := len(r.revisions) - 1; i >= 0; i-- {
+		if r.revisions[i].DocID == docID {
+			out = append(out, r.revisions[i])
+		}
+	}
+	return out, nil
+}
+
+func (r *revisionMemStore) GetRevision(_ context.Context, docID string, num int) (*server.Revision, error) {
+	for _, rev := range r.revisions {
+		if rev.DocID == docID && rev.Num == num {
+			return &rev, nil
+		}
+	}
+	return nil, server.ErrNotFound
+}
+
+func (r *revisionMemStore) DeleteRevisions(_ context.Context, docID string) error {
+	r.deleted = append(r.deleted, docID)
+	var kept []server.Revision
+	for _, rev := range r.revisions {
+		if rev.DocID != docID {
+			kept = append(kept, rev)
+		}
+	}
+	r.revisions = kept
+	return nil
+}
+
 // failVisibilityStore wraps a real store but fails on UpdateVisibility.
 type failVisibilityStore struct{ server.Store }
 
@@ -1722,6 +1770,84 @@ func TestViewAnonymousDocumentWithAuth(t *testing.T) {
 	html := readBody(t, resp)
 	if strings.Contains(html, `class="delete-btn"`) {
 		t.Error("delete button must not appear for an anonymous document even when authenticated")
+	}
+}
+
+// ── Revision wiring tests ──────────────────────────────────
+
+func TestUpdateDocumentSavesRevision(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Original"})
+	_ = mc.Put(context.Background(), doc.ID, []byte("old content"))
+
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID),
+		strings.NewReader(`{"title":"New Title","content":"new content"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	revs, _ := rs.ListRevisions(context.Background(), doc.ID)
+	if len(revs) != 1 {
+		t.Fatalf("want 1 revision saved, got %d", len(revs))
+	}
+	if revs[0].Title != "Original" {
+		t.Errorf("revision title = %q, want Original (pre-update state)", revs[0].Title)
+	}
+}
+
+func TestDeleteDocumentCleansRevisions(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc"})
+	_ = mc.Put(context.Background(), doc.ID, []byte("content"))
+	_, _ = rs.SaveRevision(context.Background(), server.Revision{DocID: doc.ID, Title: "Doc"})
+
+	req, _ := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+
+	if len(rs.deleted) == 0 || rs.deleted[0] != doc.ID {
+		t.Errorf("expected DeleteRevisions called for %s, got %v", doc.ID, rs.deleted)
+	}
+}
+
+func TestUpdateDocumentNoRevisionStoreOK(t *testing.T) {
+	ms := newMemStore()
+	mc := newMemContent()
+	ts := newServerWith(t, ms, mc)
+
+	doc, _ := ms.Create(context.Background(), server.Document{Title: "Doc"})
+	_ = mc.Put(context.Background(), doc.ID, []byte("content"))
+
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID),
+		strings.NewReader(`{"title":"New"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 when store has no RevisionStore", resp.StatusCode)
 	}
 }
 
