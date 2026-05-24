@@ -535,6 +535,146 @@ func TestBoltUpdateVisibilityNotFound(t *testing.T) {
 	}
 }
 
+// ── BoltStore revision tests ───────────────────────────────
+
+func makeRevision(docID string) server.Revision {
+	return server.Revision{
+		DocID:      docID,
+		Title:      "Test",
+		Author:     "alice",
+		Visibility: server.VisibilityPublic,
+		SavedAt:    time.Now().UTC(),
+	}
+}
+
+func TestSaveAndListRevisions(t *testing.T) {
+	ctx := context.Background()
+	s := newTestBolt(t)
+
+	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
+
+	rev1 := makeRevision(doc.ID)
+	if err := s.SaveRevision(ctx, rev1); err != nil {
+		t.Fatalf("SaveRevision: %v", err)
+	}
+	rev2 := makeRevision(doc.ID)
+	rev2.Title = "Updated"
+	if err := s.SaveRevision(ctx, rev2); err != nil {
+		t.Fatalf("SaveRevision: %v", err)
+	}
+
+	revs, err := s.ListRevisions(ctx, doc.ID)
+	if err != nil {
+		t.Fatalf("ListRevisions: %v", err)
+	}
+	if len(revs) != 2 {
+		t.Fatalf("want 2 revisions, got %d", len(revs))
+	}
+	// Newest first: rev2 (Num=2), rev1 (Num=1).
+	if revs[0].Num != 2 || revs[1].Num != 1 {
+		t.Errorf("order wrong: nums %d, %d", revs[0].Num, revs[1].Num)
+	}
+}
+
+func TestGetRevision(t *testing.T) {
+	ctx := context.Background()
+	s := newTestBolt(t)
+
+	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
+	rev := makeRevision(doc.ID)
+	rev.AddedLines = 5
+	rev.RemovedLines = 2
+	_ = s.SaveRevision(ctx, rev)
+
+	got, err := s.GetRevision(ctx, doc.ID, 1)
+	if err != nil {
+		t.Fatalf("GetRevision: %v", err)
+	}
+	if got.Num != 1 || got.AddedLines != 5 || got.RemovedLines != 2 {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestGetRevisionNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := newTestBolt(t)
+	_, err := s.GetRevision(ctx, "no-such-doc", 1)
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestRevisionPruning(t *testing.T) {
+	ctx := context.Background()
+	s := newTestBolt(t)
+
+	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
+	for i := 0; i < 52; i++ {
+		if err := s.SaveRevision(ctx, makeRevision(doc.ID)); err != nil {
+			t.Fatalf("SaveRevision %d: %v", i, err)
+		}
+	}
+
+	revs, err := s.ListRevisions(ctx, doc.ID)
+	if err != nil {
+		t.Fatalf("ListRevisions: %v", err)
+	}
+	if len(revs) != 50 {
+		t.Errorf("want 50 revisions after pruning, got %d", len(revs))
+	}
+	// Oldest should be rev 3 (revs 1 and 2 pruned).
+	if revs[len(revs)-1].Num != 3 {
+		t.Errorf("want oldest Num=3 after pruning, got %d", revs[len(revs)-1].Num)
+	}
+}
+
+func TestDeleteRevisions(t *testing.T) {
+	ctx := context.Background()
+	s := newTestBolt(t)
+
+	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
+	_ = s.SaveRevision(ctx, makeRevision(doc.ID))
+	_ = s.SaveRevision(ctx, makeRevision(doc.ID))
+
+	if err := s.DeleteRevisions(ctx, doc.ID); err != nil {
+		t.Fatalf("DeleteRevisions: %v", err)
+	}
+
+	revs, err := s.ListRevisions(ctx, doc.ID)
+	if err != nil {
+		t.Fatalf("ListRevisions after delete: %v", err)
+	}
+	if len(revs) != 0 {
+		t.Errorf("want 0 revisions after delete, got %d", len(revs))
+	}
+	// Sequence reset: next save should start at 1.
+	_ = s.SaveRevision(ctx, makeRevision(doc.ID))
+	revs, _ = s.ListRevisions(ctx, doc.ID)
+	if revs[0].Num != 1 {
+		t.Errorf("want Num=1 after reset, got %d", revs[0].Num)
+	}
+}
+
+func TestRevisionIsolatedByDoc(t *testing.T) {
+	ctx := context.Background()
+	s := newTestBolt(t)
+
+	doc1, _ := s.Create(ctx, server.Document{Title: "doc1"})
+	doc2, _ := s.Create(ctx, server.Document{Title: "doc2"})
+	_ = s.SaveRevision(ctx, makeRevision(doc1.ID))
+	_ = s.SaveRevision(ctx, makeRevision(doc1.ID))
+	_ = s.SaveRevision(ctx, makeRevision(doc2.ID))
+
+	revs1, _ := s.ListRevisions(ctx, doc1.ID)
+	revs2, _ := s.ListRevisions(ctx, doc2.ID)
+	if len(revs1) != 2 {
+		t.Errorf("doc1: want 2, got %d", len(revs1))
+	}
+	if len(revs2) != 1 {
+		t.Errorf("doc2: want 1, got %d", len(revs2))
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

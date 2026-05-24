@@ -18,11 +18,16 @@ import (
 )
 
 var (
-	bucketDocs   = []byte("documents")
-	bucketByTime = []byte("documents_by_time")
+	bucketDocs      = []byte("documents")
+	bucketByTime    = []byte("documents_by_time")
+	bucketRevisions = []byte("revisions")
+	bucketRevSeq    = []byte("revision_seq")
 )
 
-var _ server.Store = (*BoltStore)(nil) // compile-time interface check
+const maxRevisions = 50
+
+var _ server.Store         = (*BoltStore)(nil) // compile-time interface check
+var _ server.RevisionStore = (*BoltStore)(nil)
 
 // BoltStore implements Store using bbolt for document metadata.
 type BoltStore struct {
@@ -42,11 +47,12 @@ func NewBolt(path string) (*BoltStore, error) {
 		return nil, fmt.Errorf("open bbolt: %w", err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		if _, err := tx.CreateBucketIfNotExists(bucketDocs); err != nil {
-			return err
+		for _, b := range [][]byte{bucketDocs, bucketByTime, bucketRevisions, bucketRevSeq} {
+			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
+				return err
+			}
 		}
-		_, err = tx.CreateBucketIfNotExists(bucketByTime)
-		return err
+		return nil
 	})
 	if err != nil {
 		db.Close()
@@ -281,4 +287,117 @@ func makeTimeKey(t time.Time, id string) []byte {
 	binary.BigEndian.PutUint64(key[:8], uint64(t.UnixNano()))
 	copy(key[8:], id)
 	return key
+}
+
+// revKey builds the bucket key for a revision: "{docID}/{num:06d}".
+func revKey(docID string, num int) []byte {
+	return []byte(fmt.Sprintf("%s/%06d", docID, num))
+}
+
+// revPrefix returns the key prefix for all revisions of a document.
+func revPrefix(docID string) []byte {
+	return []byte(docID + "/")
+}
+
+func (s *BoltStore) SaveRevision(_ context.Context, rev server.Revision) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		seq := tx.Bucket(bucketRevSeq)
+		revs := tx.Bucket(bucketRevisions)
+
+		// Increment sequence for this document.
+		var num uint64
+		if raw := seq.Get([]byte(rev.DocID)); raw != nil {
+			num = binary.BigEndian.Uint64(raw)
+		}
+		num++
+		var buf [8]byte
+		binary.BigEndian.PutUint64(buf[:], num)
+		if err := seq.Put([]byte(rev.DocID), buf[:]); err != nil {
+			return err
+		}
+
+		rev.Num = int(num)
+		data, err := json.Marshal(rev)
+		if err != nil {
+			return err
+		}
+		if err := revs.Put(revKey(rev.DocID, rev.Num), data); err != nil {
+			return err
+		}
+
+		// Prune oldest revisions if over the cap.
+		prefix := revPrefix(rev.DocID)
+		c := revs.Cursor()
+		var keys [][]byte
+		for k, _ := c.Seek(prefix); k != nil && strings.HasPrefix(string(k), string(prefix)); k, _ = c.Next() {
+			keys = append(keys, append([]byte{}, k...))
+		}
+		for len(keys) > maxRevisions {
+			if err := revs.Delete(keys[0]); err != nil {
+				return err
+			}
+			keys = keys[1:]
+		}
+		return nil
+	})
+}
+
+func (s *BoltStore) ListRevisions(_ context.Context, docID string) ([]server.Revision, error) {
+	var revs []server.Revision
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketRevisions)
+		prefix := revPrefix(docID)
+		c := b.Cursor()
+		// Collect all matching keys then reverse for newest-first.
+		var keys [][]byte
+		for k, _ := c.Seek(prefix); k != nil && strings.HasPrefix(string(k), string(prefix)); k, _ = c.Next() {
+			keys = append(keys, append([]byte{}, k...))
+		}
+		for i := len(keys) - 1; i >= 0; i-- {
+			data := b.Get(keys[i])
+			if data == nil {
+				continue
+			}
+			var rev server.Revision
+			if err := json.Unmarshal(data, &rev); err != nil {
+				return err
+			}
+			revs = append(revs, rev)
+		}
+		return nil
+	})
+	return revs, err
+}
+
+func (s *BoltStore) GetRevision(_ context.Context, docID string, num int) (*server.Revision, error) {
+	var rev server.Revision
+	err := s.db.View(func(tx *bolt.Tx) error {
+		data := tx.Bucket(bucketRevisions).Get(revKey(docID, num))
+		if data == nil {
+			return server.ErrNotFound
+		}
+		return json.Unmarshal(data, &rev)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &rev, nil
+}
+
+func (s *BoltStore) DeleteRevisions(_ context.Context, docID string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketRevisions)
+		prefix := revPrefix(docID)
+		c := b.Cursor()
+		var keys [][]byte
+		for k, _ := c.Seek(prefix); k != nil && strings.HasPrefix(string(k), string(prefix)); k, _ = c.Next() {
+			keys = append(keys, append([]byte{}, k...))
+		}
+		for _, k := range keys {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		return tx.Bucket(bucketRevSeq).Delete([]byte(docID))
+	})
 }
