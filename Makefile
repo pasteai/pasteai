@@ -69,9 +69,23 @@ test-install:
 ## test-all: run all tests
 test-all: test test-integration test-install
 
-## lint: run go vet
+## lint: run go vet + staticcheck
 lint:
 	go vet ./...
+	go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+
+## style: check style guide compliance (naming, errors, test patterns)
+style:
+	@bash scripts/style-check.sh
+
+## coverage: run tests with coverage and fail below 80%
+coverage:
+	go test -race -coverprofile=coverage.out ./...
+	@go tool cover -func=coverage.out | awk '/^total:/ { \
+	  pct = substr($$3, 1, length($$3)-1) + 0; \
+	  printf "Coverage: %.1f%%\n", pct; \
+	  if (pct < 80.0) { print "FAIL: coverage " $$3 " is below 80%"; exit 1 } \
+	}'
 
 ## clean: remove build artifacts
 clean:
