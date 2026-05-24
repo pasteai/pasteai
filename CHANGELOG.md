@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.0.13](https://github.com/pasteai/pasteai/compare/v0.0.12...v0.0.13) (2026-05-24)
+
+
+### Features
+
+* add internal/diff package with Unified and CountLines ([9bd83c0](https://github.com/pasteai/pasteai/commit/9bd83c02785422888a97c2e1f9f37556ce80ae6a))
+* add revision list, view, and diff handlers with split-panel UI ([fefc113](https://github.com/pasteai/pasteai/commit/fefc113ce90d0b627ae33c96c59c28fe55f5cdc0))
+* add Revision type and RevisionStore/RevisionContentBackend interfaces ([7b1bf64](https://github.com/pasteai/pasteai/commit/7b1bf6469a0db95fc8457dc33f5133aa3aa84019))
+* implement RevisionContentBackend on DiskContent ([e414e3c](https://github.com/pasteai/pasteai/commit/e414e3c712f39b8327e093fec04e76f180f0dfff))
+* implement RevisionStore on BoltStore with sequence tracking and 50-revision cap ([899a1da](https://github.com/pasteai/pasteai/commit/899a1da93f1bc8d487d6ee81ee6e0f7fa2505116))
+* wire revision saving into handleUpdateDocument and cleanup into handleDeleteDocument ([892e241](https://github.com/pasteai/pasteai/commit/892e241c8b720856930abec9bf54dc26249bb7fe))
+
+
+### Bug Fixes
+
+* collapse secondary nav links on mobile and fix search styling on iOS ([88b7e60](https://github.com/pasteai/pasteai/commit/88b7e60f1d912bc7f9cf679ea6deac3155ca8c08))
+* correct line counts for title-only updates, 404 for missing doc revisions API, CSS cache busting, mobile sheet display, layout wrapping ([72def44](https://github.com/pasteai/pasteai/commit/72def44a0dabdcf9e9a8a8786f2106af50ed73f0))
+* replace undefined --color-accent with --color-primary, use --color-danger on delete modal ([66ceada](https://github.com/pasteai/pasteai/commit/66ceadab84cbb69177bb38dc303500d23f03735f))
+* show error message in search results on fetch failure ([4c8bb0a](https://github.com/pasteai/pasteai/commit/4c8bb0adaa322c99afe27dfb150fa5584680142e))
+* UX improvements to revision UI — ARIA cleanup, error path buttons, Escape to close sheet, colour-blind diff accents, breadcrumb back-link, remove duplicate date ([2cd00d7](https://github.com/pasteai/pasteai/commit/2cd00d7c4cd71570bf123ee9688f9458fc0b8bc9))
+
 ## [0.0.12](https://github.com/pasteai/pasteai/compare/v0.0.11...v0.0.12) (2026-05-24)
 
 
