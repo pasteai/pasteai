@@ -189,3 +189,17 @@ func TestRenderReturnsTrustedHTML(t *testing.T) {
 	// template.HTML type ensures Go's template engine won't double-escape it
 	_ = result.HTML
 }
+
+func TestRenderHeadingWithInlineHTML(t *testing.T) {
+	// A heading with emphasis triggers the !inTag==false branch in stripTags.
+	result, err := renderer.Render("# Hello *world*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Headings) == 0 {
+		t.Fatal("expected headings extracted")
+	}
+	if result.Headings[0].Text != "Hello world" {
+		t.Errorf("heading text = %q, want Hello world", result.Headings[0].Text)
+	}
+}

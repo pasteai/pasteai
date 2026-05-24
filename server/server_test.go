@@ -1672,6 +1672,32 @@ func TestEventListenerNotCalledOnError(t *testing.T) {
 	}
 }
 
+func TestViewAnonymousDocumentWithAuth(t *testing.T) {
+	ts, db := newServerWithAuth(t, "secret")
+	// Anonymous doc (no OwnerID) — canModify returns false when auth is enabled
+	// because doc.OwnerID == "". Delete button must not appear even for an
+	// authenticated user.
+	doc, _ := db.store.Create(context.Background(), server.Document{Title: "Anon"})
+	if err := db.content.Put(context.Background(), doc.ID, []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/d/"+doc.ID, nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET anonymous doc with auth: got %d, want 200", resp.StatusCode)
+	}
+	html := readBody(t, resp)
+	if strings.Contains(html, `class="delete-btn"`) {
+		t.Error("delete button must not appear for an anonymous document even when authenticated")
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

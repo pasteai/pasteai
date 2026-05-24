@@ -506,6 +506,35 @@ func TestBoltAndDiskIntegration(t *testing.T) {
 	}
 }
 
+func TestBoltUpdateVisibility(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	doc, _ := s.Create(ctx, server.Document{Title: "Test", Visibility: server.VisibilityPublic})
+
+	updated, err := s.UpdateVisibility(ctx, doc.ID, server.VisibilityUnlisted)
+	if err != nil {
+		t.Fatalf("UpdateVisibility: %v", err)
+	}
+	if updated.Visibility != server.VisibilityUnlisted {
+		t.Errorf("visibility = %q, want unlisted", updated.Visibility)
+	}
+	if updated.Content != "" {
+		t.Error("UpdateVisibility must return empty Content")
+	}
+	got, _ := s.Get(ctx, doc.ID)
+	if got.Visibility != server.VisibilityUnlisted {
+		t.Errorf("persisted visibility = %q, want unlisted", got.Visibility)
+	}
+}
+
+func TestBoltUpdateVisibilityNotFound(t *testing.T) {
+	s := newTestBolt(t)
+	_, err := s.UpdateVisibility(context.Background(), "nonexistent", server.VisibilityUnlisted)
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

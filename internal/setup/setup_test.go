@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -907,6 +909,14 @@ func TestBinaryFlagRelativePath(t *testing.T) {
 	}
 }
 
+func TestRunLocalMode(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := Run([]string{"-mode", "local", "-binary", "/fake/pasteai"}); err != nil {
+		t.Fatalf("Run local: %v", err)
+	}
+}
+
 func TestBinaryFlagNoStat(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -919,5 +929,110 @@ func TestBinaryFlagNoStat(t *testing.T) {
 	entry := getPasteaiEntryUnit(t, readJSONFile(t, filepath.Join(dir, ".claude.json")))
 	if entry["command"] != nonExistent {
 		t.Errorf("command = %v, want %s", entry["command"], nonExistent)
+	}
+}
+
+// ── checkServer ────────────────────────────────────────────
+
+func TestCheckServer_EmptyURL(t *testing.T) {
+	if checkServer("") {
+		t.Error("expected false for empty server URL")
+	}
+}
+
+func TestCheckServer_OK(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	if !checkServer(ts.URL) {
+		t.Error("expected true when server returns 200 OK")
+	}
+}
+
+func TestCheckServer_NonOK(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer ts.Close()
+	if checkServer(ts.URL) {
+		t.Error("expected false when server returns non-200")
+	}
+}
+
+// ── detectMode ─────────────────────────────────────────────
+
+func TestDetectMode_Local(t *testing.T) {
+	entry := map[string]any{
+		"env": map[string]any{"PASTEAI_URL": "http://localhost:8080"},
+	}
+	if m := detectMode(entry); m != modeLocal {
+		t.Errorf("detectMode = %q, want %q", m, modeLocal)
+	}
+}
+
+func TestDetectMode_EmbeddedEmptyURL(t *testing.T) {
+	entry := map[string]any{
+		"env": map[string]any{"PASTEAI_URL": ""},
+	}
+	if m := detectMode(entry); m != modeEmbedded {
+		t.Errorf("detectMode = %q, want %q", m, modeEmbedded)
+	}
+}
+
+// ── checkEntry ──────────────────────────────────────────────
+
+func TestCheckEntry_InvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+	os.WriteFile(path, []byte("not valid json"), 0600)
+
+	_, _, _, err := checkEntry(path)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestCheckEntry_NoMCPServers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+	data, _ := json.Marshal(map[string]any{"other": "value"})
+	os.WriteFile(path, data, 0600)
+
+	_, _, _, err := checkEntry(path)
+	if err == nil {
+		t.Fatal("expected error when mcpServers missing")
+	}
+}
+
+// ── Run error paths ─────────────────────────────────────────
+
+func TestRun_ParseError(t *testing.T) {
+	if err := Run([]string{"--unknown-flag-xyz"}); err == nil {
+		t.Fatal("expected error for unknown flag")
+	}
+}
+
+func TestRunWithoutBinaryFlag(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	// No -binary flag — exercises selfPath() call inside Run.
+	if err := Run([]string{"-mode", "embedded"}); err != nil {
+		t.Fatalf("Run without -binary: %v", err)
+	}
+}
+
+func TestRunMergeJSONError(t *testing.T) {
+	dir := t.TempDir()
+	// Place a directory where .claude.json should be — os.ReadFile on a directory
+	// returns EISDIR (not ErrNotExist), hitting the error fallback path in Run.
+	if err := os.Mkdir(filepath.Join(dir, ".claude.json"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", dir)
+
+	err := Run([]string{"-mode", "embedded", "-binary", "/fake/pasteai"})
+	if err == nil {
+		t.Fatal("expected error when .claude.json is a directory")
 	}
 }

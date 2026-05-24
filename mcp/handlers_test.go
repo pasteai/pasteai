@@ -591,7 +591,7 @@ func TestNewNilHTTPClientFallsBack(t *testing.T) {
 		client = opts.HTTPClient
 	}
 	if client == nil {
-		t.Error("expected non-nil fallback client")
+		t.Fatal("expected non-nil fallback client")
 	}
 	if client.Timeout != 30*time.Second {
 		t.Errorf("default timeout = %v, want 30s", client.Timeout)
@@ -664,5 +664,264 @@ func TestEmbeddedDBPath(t *testing.T) {
 	p := embeddedDBPath()
 	if p != "/tmp/test-home/.pasteai/documents.db" {
 		t.Errorf("embeddedDBPath = %q, want /tmp/test-home/.pasteai/documents.db", p)
+	}
+}
+
+// ── NewHTTPHandler ────────────────────────────────────────
+
+func TestNewHTTPHandler_Valid(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+	h, err := NewHTTPHandler(Options{
+		URL:    ts.URL,
+		Logger: log.New(io.Discard, "", 0),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h == nil {
+		t.Fatal("expected non-nil handler")
+	}
+}
+
+func TestNewHTTPHandler_EmptyURL(t *testing.T) {
+	_, err := NewHTTPHandler(Options{})
+	if err == nil {
+		t.Fatal("expected error for empty URL")
+	}
+}
+
+func TestNewHTTPHandler_InvalidScheme(t *testing.T) {
+	_, err := NewHTTPHandler(Options{URL: "ftp://example.com"})
+	if err == nil {
+		t.Fatal("expected error for non-http/https scheme")
+	}
+}
+
+// ── Handler / registerTools ──────────────────────────────
+
+func TestHandler_NonNil(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+	s := &Server{
+		baseURL:    ts.URL,
+		logger:     log.New(io.Discard, "", 0),
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+	}
+	h := s.Handler()
+	if h == nil {
+		t.Fatal("expected non-nil handler from Handler()")
+	}
+}
+
+func TestNewHTTPHandler_DefaultsLogger(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+	h, err := NewHTTPHandler(Options{URL: ts.URL})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h == nil {
+		t.Fatal("expected non-nil handler")
+	}
+}
+
+// ── New ──────────────────────────────────────────────────
+
+func TestNew_WithProvidedURL(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+	s := New(Options{
+		URL:    ts.URL,
+		Logger: log.New(io.Discard, "", 0),
+	})
+	if s == nil {
+		t.Fatal("expected non-nil server")
+	}
+}
+
+func TestNew_WithDefaultLogger(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+	s := New(Options{URL: ts.URL}) // no Logger — exercises default logger branch
+	if s == nil {
+		t.Fatal("expected non-nil server")
+	}
+}
+
+func TestNew_ExistingEmbeddedServer(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	addr := ts.Listener.Addr().String()
+	port := addr[strings.LastIndex(addr, ":")+1:]
+
+	s := New(Options{
+		EmbeddedPort: port,
+		Logger:       log.New(io.Discard, "", 0),
+	})
+	if s == nil {
+		t.Fatal("expected non-nil server when embedded server is already responding")
+	}
+}
+
+// ── Run ──────────────────────────────────────────────────────
+
+func TestRun_CleanupCalled(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+	cleaned := false
+	s := &Server{
+		baseURL:    ts.URL,
+		logger:     log.New(io.Discard, "", 0),
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+		cleanup:    func() { cleaned = true },
+	}
+
+	r, w, _ := os.Pipe()
+	w.Close()
+	origStdin := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = origStdin; r.Close() }()
+
+	_ = s.Run()
+
+	if !cleaned {
+		t.Error("expected cleanup to be called after Run")
+	}
+}
+
+// ── startEmbedded ─────────────────────────────────────────
+
+func TestStartEmbedded(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	logger := log.New(io.Discard, "", 0)
+
+	cleanup, err := startEmbedded("0", logger)
+	if err != nil {
+		t.Fatalf("startEmbedded: %v", err)
+	}
+	cleanup()
+}
+
+// ── API key header coverage ───────────────────────────────────
+
+func TestHandleGet_WithAPIKey(t *testing.T) {
+	var gotAuth string
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]string{"id": "abc", "title": "T", "url": "http://x/d/abc"})
+	}))
+	s.apiKey = "my-key"
+	s.handleGet(context.Background(), makeReq(map[string]any{"id": "abc"}))
+	if gotAuth != "Bearer my-key" {
+		t.Errorf("Authorization = %q, want Bearer my-key", gotAuth)
+	}
+}
+
+func TestHandleGet_DecodeError(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	}))
+	tr, err := s.handleGet(context.Background(), makeReq(map[string]any{"id": "abc"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for invalid JSON response")
+	}
+}
+
+func TestHandleList_WithAPIKey(t *testing.T) {
+	var gotAuth string
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]any{"documents": []any{}})
+	}))
+	s.apiKey = "my-key"
+	s.handleList(context.Background(), makeReq(nil))
+	if gotAuth != "Bearer my-key" {
+		t.Errorf("Authorization = %q, want Bearer my-key", gotAuth)
+	}
+}
+
+func TestHandleList_DecodeError(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	}))
+	tr, err := s.handleList(context.Background(), makeReq(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for invalid JSON response")
+	}
+}
+
+func TestHandleUpdate_WithAPIKey(t *testing.T) {
+	var gotAuth string
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]string{"id": "abc", "url": "http://x/d/abc"})
+	}))
+	s.apiKey = "my-key"
+	s.handleUpdate(context.Background(), makeReq(map[string]any{"id": "abc", "title": "T"}))
+	if gotAuth != "Bearer my-key" {
+		t.Errorf("Authorization = %q, want Bearer my-key", gotAuth)
+	}
+}
+
+func TestHandleDelete_WithAPIKey(t *testing.T) {
+	var gotAuth string
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	s.apiKey = "my-key"
+	s.handleDelete(context.Background(), makeReq(map[string]any{"id": "abc"}))
+	if gotAuth != "Bearer my-key" {
+		t.Errorf("Authorization = %q, want Bearer my-key", gotAuth)
+	}
+}
+
+func TestHandleSearch_WithAPIKey(t *testing.T) {
+	var gotAuth string
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode(map[string]any{"documents": []any{}})
+	}))
+	s.apiKey = "my-key"
+	s.handleSearch(context.Background(), makeReq(map[string]any{"query": "test"}))
+	if gotAuth != "Bearer my-key" {
+		t.Errorf("Authorization = %q, want Bearer my-key", gotAuth)
+	}
+}
+
+func TestHandleSearch_DecodeError(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	}))
+	tr, err := s.handleSearch(context.Background(), makeReq(map[string]any{"query": "test"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for invalid JSON response")
+	}
+}
+
+func TestHandlePublish_DecodeError(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte("not json"))
+	}))
+	tr, err := s.handlePublish(context.Background(), makeReq(map[string]any{"title": "T", "content": "C"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for invalid JSON in 201 response")
 	}
 }
