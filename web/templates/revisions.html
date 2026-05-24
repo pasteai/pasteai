@@ -4,7 +4,8 @@
 
 {{define "body"}}
 <div class="page">
-  <div class="content-wrapper rev-browser-wrapper">
+  <div class="content-wrapper">
+    <div class="content-inner rev-browser-wrapper">
     <nav class="doc-breadcrumb">
       <a href="/">PasteAI</a>
       <span class="doc-breadcrumb-sep">/</span>
@@ -28,10 +29,10 @@
                 role="option"
                 data-num="{{.Num}}"
                 data-doc="{{.DocID}}"
-                data-saved="{{.SavedAt.Format "2006-01-02T15:04:05Z"}}"
+                data-saved="{{.SavedAt.Format `2006-01-02T15:04:05Z`}}"
                 aria-selected="false">
           <span class="rev-num">Rev {{.Num}}</span>
-          <span class="rev-time" data-iso="{{.SavedAt.Format "2006-01-02T15:04:05Z"}}">{{.SavedAt.Format "Jan 2, 2006"}}</span>
+          <span class="rev-time" data-iso="{{.SavedAt.Format `2006-01-02T15:04:05Z`}}">{{.SavedAt.Format "Jan 2, 2006"}}</span>
           <span class="rev-delta">
             {{if or .AddedLines .RemovedLines}}
             <span class="rev-add">+{{.AddedLines}}</span>
@@ -57,6 +58,7 @@
       </div>
     </div>
     {{end}}
+    </div>
   </div>
 </div>
 
@@ -76,7 +78,7 @@
 
 <script>
 (function() {
-  var docID = {{.DocID | printf "%q"}};
+  var docID = {{.DocID}};
   var currentRow = null;
   var diffCache = {};
 
@@ -194,15 +196,15 @@
     document.getElementById('rev-sheet-label').textContent = 'Rev ' + row.dataset.num;
     document.getElementById('rev-sheet-view-link').href = '/d/' + docID + '/revisions/' + row.dataset.num;
     document.getElementById('rev-sheet-diff-link').href = '/d/' + docID + '/diff?from=' + row.dataset.num;
-    document.getElementById('rev-sheet').removeAttribute('hidden');
-    document.getElementById('rev-sheet-overlay').removeAttribute('hidden');
+    document.getElementById('rev-sheet').style.display = 'flex';
+    document.getElementById('rev-sheet-overlay').style.display = 'block';
     document.body.style.overflow = 'hidden';
     loadDiff(row, 'sheet');
   }
 
   window.closeRevSheet = function() {
-    document.getElementById('rev-sheet').setAttribute('hidden', '');
-    document.getElementById('rev-sheet-overlay').setAttribute('hidden', '');
+    document.getElementById('rev-sheet').style.display = 'none';
+    document.getElementById('rev-sheet-overlay').style.display = 'none';
     document.body.style.overflow = '';
   };
 })();

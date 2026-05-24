@@ -1629,8 +1629,6 @@ button.nav-link {
   .doc-header h1 { font-size: 1.5rem; }
   .steps-grid { grid-template-columns: 1fr; }
   .theme-btn span:nth-child(2) { display: none; }
-  .rev-browser { grid-template-columns: 1fr; }
-  .rev-preview-panel { display: none; }
 }
 
 /* ── Revision browser ────────────────────────────────────── */
@@ -1812,3 +1810,10 @@ button.nav-link {
   border-bottom: 1px solid var(--color-border);
 }
 .rev-sheet [aria-selected="true"] { background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
+
+@media (max-width: 640px) {
+  .rev-browser { grid-template-columns: 1fr; }
+  .rev-preview-panel { display: none; }
+  .rev-list { border-right: none; max-height: none; }
+  .rev-browser { min-height: 0; }
+}

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,7 @@ type srv struct {
 	baseURL           string
 	logger            *log.Logger
 	chromaCSS         template.CSS
+	cssVersion        string
 	authProvider      AuthProvider
 	defaultVisibility Visibility
 	eventListener     EventListener
@@ -51,6 +53,12 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		logger = log.Default()
 	}
 
+	cssVersion := "1"
+	if cssBytes, err := web.FS.ReadFile("static/style.css"); err == nil {
+		sum := sha256.Sum256(cssBytes)
+		cssVersion = fmt.Sprintf("%x", sum[:4])
+	}
+
 	s := &srv{
 		mux:               http.NewServeMux(),
 		store:             store,
@@ -58,6 +66,7 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		baseURL:           opts.BaseURL,
 		logger:            logger,
 		chromaCSS:         renderer.ThemeCSS(),
+		cssVersion:        cssVersion,
 		authProvider:      opts.AuthProvider,
 		defaultVisibility: opts.DefaultVisibility,
 		eventListener:     opts.EventListener,
@@ -76,18 +85,16 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 }
 
 func (s *srv) loadTemplates() {
-	s.homeTmpl = template.Must(template.New("").ParseFS(web.FS,
-		"templates/base.html", "templates/home.html"))
-	s.documentTmpl = template.Must(template.New("").ParseFS(web.FS,
-		"templates/base.html", "templates/document.html"))
-	s.errorTmpl = template.Must(template.New("").ParseFS(web.FS,
-		"templates/base.html", "templates/error.html"))
-	s.revisionsTmpl = template.Must(template.New("").ParseFS(web.FS,
-		"templates/base.html", "templates/revisions.html"))
-	s.revisionTmpl = template.Must(template.New("").ParseFS(web.FS,
-		"templates/base.html", "templates/revision.html"))
-	s.diffTmpl = template.Must(template.New("").ParseFS(web.FS,
-		"templates/base.html", "templates/diff.html"))
+	funcs := template.FuncMap{"cssVersion": func() string { return s.cssVersion }}
+	parse := func(files ...string) *template.Template {
+		return template.Must(template.New("").Funcs(funcs).ParseFS(web.FS, files...))
+	}
+	s.homeTmpl = parse("templates/base.html", "templates/home.html")
+	s.documentTmpl = parse("templates/base.html", "templates/document.html")
+	s.errorTmpl = parse("templates/base.html", "templates/error.html")
+	s.revisionsTmpl = parse("templates/base.html", "templates/revisions.html")
+	s.revisionTmpl = parse("templates/base.html", "templates/revision.html")
+	s.diffTmpl = parse("templates/base.html", "templates/diff.html")
 }
 
 func (s *srv) registerRoutes(homeHandler http.Handler) {
@@ -568,7 +575,12 @@ func (s *srv) saveRevision(ctx context.Context, docID, newContent string) {
 		currentContent = string(raw)
 	}
 
-	added, removed := diff.CountLines(currentContent, newContent)
+	// If newContent is empty the update is title/visibility-only; content is unchanged.
+	effectiveNew := newContent
+	if effectiveNew == "" {
+		effectiveNew = currentContent
+	}
+	added, removed := diff.CountLines(currentContent, effectiveNew)
 	saved, err := rs.SaveRevision(ctx, Revision{
 		DocID:        docID,
 		Title:        doc.Title,

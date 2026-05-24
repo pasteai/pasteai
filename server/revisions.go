@@ -216,6 +216,14 @@ func (s *srv) handleListRevisionsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	if _, err := s.store.Get(r.Context(), id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		s.serverError(w, err)
+		return
+	}
 	revs, err := rs.ListRevisions(r.Context(), id)
 	if err != nil {
 		s.serverError(w, err)
