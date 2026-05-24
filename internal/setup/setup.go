@@ -386,7 +386,7 @@ func readClaudeJSON(path string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var cfg map[string]any
+	cfg := map[string]any{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		// Malformed JSON — treat as empty rather than blocking setup
 		return map[string]any{}, nil

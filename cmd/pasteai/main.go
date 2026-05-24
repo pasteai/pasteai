@@ -96,11 +96,15 @@ func runServe(args []string) {
 			}
 			mcpURL = "http://127.0.0.1:" + port
 		}
-		opts.MCPHandler = mcp.NewHTTPHandler(mcp.Options{
+		mcpHandler, err := mcp.NewHTTPHandler(mcp.Options{
 			URL:    mcpURL,
 			APIKey: *apiKey,
 			Logger: logger,
 		})
+		if err != nil {
+			logger.Fatalf("invalid MCP handler config: %v", err)
+		}
+		opts.MCPHandler = mcpHandler
 		logger.Printf("MCP HTTP endpoint enabled at /mcp")
 	}
 	handler := server.NewServer(boltStore, diskContent, opts)

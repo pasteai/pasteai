@@ -24,6 +24,7 @@ var (
 
 var _ server.Store = (*BoltStore)(nil) // compile-time interface check
 
+// BoltStore implements Store using bbolt for document metadata.
 type BoltStore struct {
 	db *bolt.DB
 }
@@ -34,6 +35,7 @@ func DirFromDBPath(path string) string {
 	return filepath.Join(filepath.Dir(path), "documents")
 }
 
+// NewBolt opens or creates the bbolt database at path and ensures required buckets exist.
 func NewBolt(path string) (*BoltStore, error) {
 	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
@@ -107,8 +109,8 @@ func (s *BoltStore) List(_ context.Context, opts server.ListOptions) (*server.Li
 
 		var k, v []byte
 		if start != nil {
-			k, v = c.Seek(start)
 			// Seek lands on start or the next key after it; we want the key before start.
+			_, _ = c.Seek(start)
 			k, v = c.Prev()
 		} else {
 			k, v = c.Last()

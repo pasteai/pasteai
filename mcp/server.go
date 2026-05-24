@@ -57,13 +57,13 @@ type Server struct {
 // tool calls to opts.URL. Unlike New, it does not start an embedded server and
 // does not dial the target on creation — the target only needs to be reachable
 // when tool calls arrive. Intended for mounting on an existing HTTP mux.
-func NewHTTPHandler(opts Options) http.Handler {
+func NewHTTPHandler(opts Options) (http.Handler, error) {
 	if opts.URL == "" {
-		panic("[pasteai-mcp] NewHTTPHandler requires a non-empty URL")
+		return nil, fmt.Errorf("NewHTTPHandler requires a non-empty URL")
 	}
 	u, err := url.Parse(opts.URL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		panic(fmt.Sprintf("[pasteai-mcp] NewHTTPHandler: invalid URL %q", opts.URL))
+		return nil, fmt.Errorf("NewHTTPHandler: invalid URL %q", opts.URL)
 	}
 	u.Path, u.RawQuery, u.Fragment = "", "", ""
 
@@ -81,7 +81,7 @@ func NewHTTPHandler(opts Options) http.Handler {
 		logger:     logger,
 		httpClient: httpClient,
 	}
-	return s.Handler()
+	return s.Handler(), nil
 }
 
 // New creates a new MCP Server. If opts.URL is empty and no pasteai server is

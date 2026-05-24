@@ -77,7 +77,7 @@ func (s *srv) loadTemplates() {
 func (s *srv) registerRoutes(homeHandler http.Handler) {
 	staticFS, err := fs.Sub(web.FS, "static")
 	if err != nil {
-		panic("web.FS missing static directory: " + err.Error())
+		panic("web.FS missing static directory: " + err.Error()) // panic: build invariant — static dir is baked into the binary
 	}
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", staticCacheHandler(http.FileServerFS(staticFS))))
 

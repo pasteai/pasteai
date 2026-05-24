@@ -2,6 +2,7 @@ package server
 
 import "time"
 
+// Visibility controls who can access a document.
 type Visibility string
 
 const (

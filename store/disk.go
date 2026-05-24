@@ -11,10 +11,12 @@ import (
 
 var _ server.ContentBackend = (*DiskContent)(nil) // compile-time interface check
 
+// DiskContent implements ContentBackend by storing document content as files on disk.
 type DiskContent struct {
 	dir string
 }
 
+// NewDiskContent creates a DiskContent that stores files under dir, creating it if needed.
 func NewDiskContent(dir string) (*DiskContent, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create content dir: %w", err)

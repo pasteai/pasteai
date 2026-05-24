@@ -42,7 +42,7 @@ func authMiddleware(provider AuthProvider, allowAnonymousWrites bool, next http.
 			return
 		}
 		if ownerID != "" {
-			r = r.WithContext(context.WithValue(r.Context(), ownerKey, ownerID))
+			r = r.WithContext(context.WithValue(r.Context(), ownerKey, ownerID)) // metadata: request-scoped owner identity
 		}
 		next.ServeHTTP(w, r)
 	})

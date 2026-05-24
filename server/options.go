@@ -5,6 +5,7 @@ import (
 	"net/http"
 )
 
+// Options configures the behaviour of a server created by NewServer.
 type Options struct {
 	BaseURL              string
 	AuthProvider         AuthProvider // optional; nil means open writes

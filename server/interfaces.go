@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
+// ErrNotFound is returned when a requested document does not exist.
 var ErrNotFound = errors.New("document not found")
+
+// ErrContentMissing is returned when a document's content file cannot be found.
 var ErrContentMissing = errors.New("document content file missing")
 
 // DocumentEvent identifies which document lifecycle operation just succeeded.
@@ -28,6 +31,7 @@ type EventListener interface {
 	OnDocumentEvent(ctx context.Context, typ DocumentEvent, ownerID, docID string)
 }
 
+// Store persists documents and supports listing, searching, and deletion.
 type Store interface {
 	Create(ctx context.Context, doc Document) (*Document, error)
 	List(ctx context.Context, opts ListOptions) (*ListResult, error)
@@ -40,6 +44,7 @@ type Store interface {
 	Close() error
 }
 
+// ContentBackend stores and retrieves raw document content by document ID.
 type ContentBackend interface {
 	Put(ctx context.Context, id string, content []byte) error
 	Get(ctx context.Context, id string) ([]byte, error)
@@ -60,6 +65,7 @@ type StaticKeyAuth struct {
 	entries []struct{ key, ownerID []byte }
 }
 
+// NewStaticKeyAuth creates a StaticKeyAuth from a map of API key → ownerID.
 func NewStaticKeyAuth(keys map[string]string) *StaticKeyAuth {
 	a := &StaticKeyAuth{}
 	for k, v := range keys {
