@@ -179,7 +179,9 @@ localhost:8080/d/a3b4c5</span></code></pre>
         renderResults(q, data.documents || []);
         history.replaceState(null, '', '/?q=' + encodeURIComponent(q));
       })
-      .catch(function() {});
+      .catch(function() {
+        if (resultsEl) resultsEl.innerHTML = '<div class="empty-state"><p class="empty-title">Search failed</p><p class="empty-desc">Could not reach the server. Please try again.</p></div>';
+      });
   }
 
   function renderResults(q, docs) {
