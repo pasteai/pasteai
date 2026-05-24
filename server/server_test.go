@@ -1851,6 +1851,468 @@ func TestUpdateDocumentNoRevisionStoreOK(t *testing.T) {
 	}
 }
 
+// ── Revision content backend ───────────────────────────────
+
+type revisionMemContent struct {
+	*memContent
+	mu       sync.Mutex
+	revs     map[string][]byte // key: "docID/num"
+	deleted  []string
+}
+
+func newRevisionMemContent() *revisionMemContent {
+	return &revisionMemContent{memContent: newMemContent(), revs: make(map[string][]byte)}
+}
+
+func (rc *revisionMemContent) PutRevision(_ context.Context, docID string, num int, content []byte) error {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	key := fmt.Sprintf("%s/%d", docID, num)
+	cp := make([]byte, len(content))
+	copy(cp, content)
+	rc.revs[key] = cp
+	return nil
+}
+
+func (rc *revisionMemContent) GetRevision(_ context.Context, docID string, num int) ([]byte, error) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	key := fmt.Sprintf("%s/%d", docID, num)
+	data, ok := rc.revs[key]
+	if !ok {
+		return nil, server.ErrNotFound
+	}
+	cp := make([]byte, len(data))
+	copy(cp, data)
+	return cp, nil
+}
+
+func (rc *revisionMemContent) DeleteRevisions(_ context.Context, docID string) error {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.deleted = append(rc.deleted, docID)
+	return nil
+}
+
+// ── Revision handler tests ─────────────────────────────────
+
+func TestRevisionRoutesNotRegisteredWithoutRevisionStore(t *testing.T) {
+	ms := newMemStore()
+	mc := newMemContent()
+	ts := newServerWith(t, ms, mc)
+
+	doc, _ := ms.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+
+	for _, path := range []string{
+		"/d/" + doc.ID + "/revisions",
+		"/d/" + doc.ID + "/revisions/1",
+		"/d/" + doc.ID + "/diff?from=1",
+		"/api/documents/" + doc.ID + "/revisions",
+		"/api/documents/" + doc.ID + "/revisions/1",
+		"/api/documents/" + doc.ID + "/diff?from=1",
+	} {
+		resp := mustGet(t, ts.URL+path)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s: got %d, want 404 when store has no RevisionStore", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestListRevisions200(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+	_ = mc.Put(context.Background(), doc.ID, []byte("content v1"))
+	_, _ = rs.SaveRevision(context.Background(), server.Revision{DocID: doc.ID, Num: 1, Title: "Doc"})
+
+	resp := mustGet(t, ts.URL+"/d/"+doc.ID+"/revisions")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body := readBody(t, resp)
+	if !strings.Contains(body, "data-num") {
+		t.Error("response must contain data-num attributes for revision rows")
+	}
+	if !strings.Contains(body, "Rev 1") {
+		t.Error("response must show Rev 1")
+	}
+}
+
+func TestListRevisionsForbiddenWithAuth(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	const apiKey = "testkey"
+	handler := server.NewServer(rs, mc, server.Options{
+		Logger:       log.New(io.Discard, "", 0),
+		AuthProvider: server.NewStaticKeyAuth(map[string]string{apiKey: "owner1"}),
+	})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+
+	doc, _ := rs.Create(context.Background(), server.Document{
+		Title: "Doc", Visibility: server.VisibilityPublic, OwnerID: "owner1",
+	})
+
+	resp := mustGet(t, ts.URL+"/d/"+doc.ID+"/revisions")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("unauthenticated request to revisions: got %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestViewRevision200(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "My Doc", Visibility: server.VisibilityPublic})
+	_ = mc.Put(context.Background(), doc.ID, []byte("current content"))
+	rev, _ := rs.SaveRevision(context.Background(), server.Revision{DocID: doc.ID, Num: 1, Title: "Old Title"})
+	_ = mc.PutRevision(context.Background(), doc.ID, rev.Num, []byte("# Old content"))
+
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s/revisions/1", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body := readBody(t, resp)
+	if !strings.Contains(body, "Old Title") {
+		t.Error("response must contain the revision title")
+	}
+	if !strings.Contains(body, "Rev 1") {
+		t.Error("response must show revision number")
+	}
+}
+
+func TestViewRevision404ForUnknownNum(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s/revisions/99", ts.URL, doc.ID))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for unknown revision num", resp.StatusCode)
+	}
+}
+
+func TestDiffHTML200(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+	_ = mc.Put(context.Background(), doc.ID, []byte("current content"))
+	rev, _ := rs.SaveRevision(context.Background(), server.Revision{DocID: doc.ID, Num: 1, Title: "Doc"})
+	_ = mc.PutRevision(context.Background(), doc.ID, rev.Num, []byte("old content"))
+
+	resp := mustGet(t, fmt.Sprintf("%s/d/%s/diff?from=1", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body := readBody(t, resp)
+	if !strings.Contains(body, "diff-body") {
+		t.Error("diff page must contain diff-body element")
+	}
+}
+
+func TestListRevisionsAPI(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+	_, _ = rs.SaveRevision(context.Background(), server.Revision{
+		DocID: doc.ID, Num: 1, Title: "Doc", AddedLines: 3, RemovedLines: 1,
+	})
+
+	resp := mustGet(t, ts.URL+"/api/documents/"+doc.ID+"/revisions")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var result struct {
+		Revisions []struct {
+			Num          int    `json:"num"`
+			AddedLines   int    `json:"added_lines"`
+			RemovedLines int    `json:"removed_lines"`
+		} `json:"revisions"`
+	}
+	decodeJSON(t, resp.Body, &result)
+	if len(result.Revisions) != 1 {
+		t.Fatalf("want 1 revision, got %d", len(result.Revisions))
+	}
+	if result.Revisions[0].Num != 1 {
+		t.Errorf("num = %d, want 1", result.Revisions[0].Num)
+	}
+	if result.Revisions[0].AddedLines != 3 {
+		t.Errorf("added_lines = %d, want 3", result.Revisions[0].AddedLines)
+	}
+}
+
+func TestGetRevisionAPI(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+	rev, _ := rs.SaveRevision(context.Background(), server.Revision{DocID: doc.ID, Num: 1, Title: "Doc"})
+	_ = mc.PutRevision(context.Background(), doc.ID, rev.Num, []byte("revision body"))
+
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s/revisions/1", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var result struct {
+		Num     int    `json:"num"`
+		Content string `json:"content"`
+	}
+	decodeJSON(t, resp.Body, &result)
+	if result.Num != 1 {
+		t.Errorf("num = %d, want 1", result.Num)
+	}
+	if result.Content != "revision body" {
+		t.Errorf("content = %q, want %q", result.Content, "revision body")
+	}
+}
+
+func TestGetRevisionAPI404(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s/revisions/99", ts.URL, doc.ID))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestDiffAPI(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+	_ = mc.Put(context.Background(), doc.ID, []byte("current\n"))
+	rev, _ := rs.SaveRevision(context.Background(), server.Revision{DocID: doc.ID, Num: 1, Title: "Doc"})
+	_ = mc.PutRevision(context.Background(), doc.ID, rev.Num, []byte("old\n"))
+
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s/diff?from=1", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var result struct {
+		From int    `json:"from"`
+		To   any    `json:"to"`
+		Diff string `json:"diff"`
+	}
+	decodeJSON(t, resp.Body, &result)
+	if result.From != 1 {
+		t.Errorf("from = %d, want 1", result.From)
+	}
+	if result.Diff == "" {
+		t.Error("diff must not be empty when content differs")
+	}
+}
+
+func TestDiffAPINoFromParam(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s/diff", ts.URL, doc.ID))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 when from param is missing", resp.StatusCode)
+	}
+}
+
+func TestDiffAPIWithToParam(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+	_ = mc.Put(context.Background(), doc.ID, []byte("current\n"))
+	rev1, _ := rs.SaveRevision(context.Background(), server.Revision{DocID: doc.ID, Num: 1, Title: "Doc"})
+	rev2, _ := rs.SaveRevision(context.Background(), server.Revision{DocID: doc.ID, Num: 2, Title: "Doc"})
+	_ = mc.PutRevision(context.Background(), doc.ID, rev1.Num, []byte("version one\n"))
+	_ = mc.PutRevision(context.Background(), doc.ID, rev2.Num, []byte("version two\n"))
+
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s/diff?from=1&to=2", ts.URL, doc.ID))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for from=1&to=2", resp.StatusCode)
+	}
+	var result struct {
+		From int `json:"from"`
+		To   any `json:"to"`
+		Diff string `json:"diff"`
+	}
+	decodeJSON(t, resp.Body, &result)
+	if result.Diff == "" {
+		t.Error("diff must not be empty")
+	}
+}
+
+func TestDiffAPIInvalidFromParam(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s/diff?from=bad", ts.URL, doc.ID))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for invalid from param", resp.StatusCode)
+	}
+}
+
+func TestDiffAPIFromRevisionNotFound(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s/diff?from=99", ts.URL, doc.ID))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for unknown from revision", resp.StatusCode)
+	}
+}
+
+func TestDiffAPIInvalidToParam(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+	_, _ = rs.SaveRevision(context.Background(), server.Revision{DocID: doc.ID, Num: 1, Title: "Doc"})
+
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s/diff?from=1&to=bad", ts.URL, doc.ID))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for invalid to param", resp.StatusCode)
+	}
+}
+
+func TestDiffAPIToRevisionNotFound(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	doc, _ := rs.Create(context.Background(), server.Document{Title: "Doc", Visibility: server.VisibilityPublic})
+	_, _ = rs.SaveRevision(context.Background(), server.Revision{DocID: doc.ID, Num: 1, Title: "Doc"})
+
+	resp := mustGet(t, fmt.Sprintf("%s/api/documents/%s/diff?from=1&to=99", ts.URL, doc.ID))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for unknown to revision", resp.StatusCode)
+	}
+}
+
+func TestListRevisions404ForUnknownDoc(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	resp := mustGet(t, ts.URL+"/d/no-such-doc/revisions")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for unknown doc", resp.StatusCode)
+	}
+}
+
+func TestViewRevision404ForUnknownDoc(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	resp := mustGet(t, ts.URL+"/d/no-such-doc/revisions/1")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for unknown doc", resp.StatusCode)
+	}
+}
+
+func TestDiffHTML404ForUnknownDoc(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	ts := newServerWith(t, rs, mc)
+
+	resp := mustGet(t, ts.URL+"/d/no-such-doc/diff?from=1")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 for unknown doc", resp.StatusCode)
+	}
+}
+
+func TestRevisionAccessWithAuthAndOwner(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	const apiKey = "testkey"
+	handler := server.NewServer(rs, mc, server.Options{
+		Logger:       log.New(io.Discard, "", 0),
+		AuthProvider: server.NewStaticKeyAuth(map[string]string{apiKey: "owner1"}),
+	})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+
+	doc, _ := rs.Create(context.Background(), server.Document{
+		Title: "Doc", Visibility: server.VisibilityPublic, OwnerID: "owner1",
+	})
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/d/"+doc.ID+"/revisions", nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("owner accessing own doc revisions: got %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestRevisionAccessWithAuthDocNotFound(t *testing.T) {
+	rs := newRevisionMemStore()
+	mc := newRevisionMemContent()
+	const apiKey = "testkey"
+	handler := server.NewServer(rs, mc, server.Options{
+		Logger:       log.New(io.Discard, "", 0),
+		AuthProvider: server.NewStaticKeyAuth(map[string]string{apiKey: "owner1"}),
+	})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/d/no-such-doc/revisions", nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("accessing revisions for nonexistent doc with auth: got %d, want 404", resp.StatusCode)
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

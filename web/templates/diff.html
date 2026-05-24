@@ -1,0 +1,58 @@
+{{template "base.html" .}}
+
+{{define "title"}}Diff Rev {{.From}} — {{.DocTitle}} — PasteAI{{end}}
+
+{{define "body"}}
+<div class="page">
+  <div class="content-wrapper">
+    <div class="content-inner">
+      <nav class="doc-breadcrumb">
+        <a href="/">PasteAI</a>
+        <span class="doc-breadcrumb-sep">/</span>
+        <a href="/d/{{.DocID}}">{{.DocTitle}}</a>
+        <span class="doc-breadcrumb-sep">/</span>
+        <a href="/d/{{.DocID}}/revisions">History</a>
+        <span class="doc-breadcrumb-sep">/</span>
+        <span>Diff</span>
+      </nav>
+
+      <header class="doc-header">
+        <div class="doc-header-top">
+          <h1 class="diff-title">Rev {{.From}} → {{.ToLabel}}</h1>
+        </div>
+        <div class="doc-meta">
+          <span>Comparing revision {{.From}} to {{.ToLabel}}</span>
+        </div>
+      </header>
+
+      {{if .DiffText}}
+      <pre class="rev-diff-body rev-diff-body--full" id="diff-body">{{.DiffText}}</pre>
+      {{else}}
+      <div class="empty-state">
+        <div class="empty-icon" aria-hidden="true">✦</div>
+        <p class="empty-title">No differences</p>
+        <p class="empty-desc">The content is identical between these two versions.</p>
+      </div>
+      {{end}}
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var pre = document.getElementById('diff-body');
+  if (!pre) return;
+  var lines = pre.textContent.split('\n');
+  var html = lines.map(function(line) {
+    var cls = '';
+    if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-header';
+    else if (line.startsWith('+')) cls = 'diff-add';
+    else if (line.startsWith('-')) cls = 'diff-remove';
+    else if (line.startsWith('@@')) cls = 'diff-hunk';
+    var escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return cls ? '<span class="' + cls + '">' + escaped + '</span>' : escaped;
+  }).join('\n');
+  pre.innerHTML = html;
+})();
+</script>
+{{end}}

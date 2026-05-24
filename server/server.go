@@ -25,6 +25,9 @@ type srv struct {
 	homeTmpl          *template.Template
 	documentTmpl      *template.Template
 	errorTmpl         *template.Template
+	revisionsTmpl     *template.Template
+	revisionTmpl      *template.Template
+	diffTmpl          *template.Template
 	baseURL           string
 	logger            *log.Logger
 	chromaCSS         template.CSS
@@ -32,6 +35,12 @@ type srv struct {
 	defaultVisibility Visibility
 	eventListener     EventListener
 	mcpHandler        http.Handler
+}
+
+// hasRevisions reports whether the configured store supports revision history.
+func (s *srv) hasRevisions() bool {
+	_, ok := s.store.(RevisionStore)
+	return ok
 }
 
 // NewServer constructs the PasteAI HTTP handler. The caller is responsible for
@@ -73,6 +82,12 @@ func (s *srv) loadTemplates() {
 		"templates/base.html", "templates/document.html"))
 	s.errorTmpl = template.Must(template.New("").ParseFS(web.FS,
 		"templates/base.html", "templates/error.html"))
+	s.revisionsTmpl = template.Must(template.New("").ParseFS(web.FS,
+		"templates/base.html", "templates/revisions.html"))
+	s.revisionTmpl = template.Must(template.New("").ParseFS(web.FS,
+		"templates/base.html", "templates/revision.html"))
+	s.diffTmpl = template.Must(template.New("").ParseFS(web.FS,
+		"templates/base.html", "templates/diff.html"))
 }
 
 func (s *srv) registerRoutes(homeHandler http.Handler) {
@@ -96,6 +111,15 @@ func (s *srv) registerRoutes(homeHandler http.Handler) {
 	s.mux.HandleFunc("PUT /api/documents/{id}", s.handleUpdateDocument)
 	s.mux.HandleFunc("DELETE /api/documents/{id}", s.handleDeleteDocument)
 	s.mux.HandleFunc("GET /api/search", s.handleSearch)
+
+	if s.hasRevisions() {
+		s.mux.HandleFunc("GET /d/{id}/revisions", s.handleListRevisions)
+		s.mux.HandleFunc("GET /d/{id}/revisions/{num}", s.handleViewRevision)
+		s.mux.HandleFunc("GET /d/{id}/diff", s.handleDiffHTML)
+		s.mux.HandleFunc("GET /api/documents/{id}/revisions", s.handleListRevisionsAPI)
+		s.mux.HandleFunc("GET /api/documents/{id}/revisions/{num}", s.handleGetRevisionAPI)
+		s.mux.HandleFunc("GET /api/documents/{id}/diff", s.handleDiffAPI)
+	}
 
 	if s.mcpHandler != nil {
 		s.mux.Handle("/mcp", s.mcpHandler)
@@ -184,16 +208,17 @@ func (s *srv) handleViewRaw(w http.ResponseWriter, r *http.Request) {
 
 type documentData struct {
 	baseData
-	Document              Document
-	RenderedHTML          template.HTML
-	Headings              []renderer.Heading
-	ChromaCSS             template.CSS
-	Description           string
-	PageURL               string
-	OGImageURL            string
-	RawURL                string
-	ShowDelete            bool
-	ShowVisibilityToggle  bool
+	Document             Document
+	RenderedHTML         template.HTML
+	Headings             []renderer.Heading
+	ChromaCSS            template.CSS
+	Description          string
+	PageURL              string
+	OGImageURL           string
+	RawURL               string
+	ShowDelete           bool
+	ShowVisibilityToggle bool
+	ShowRevisions        bool
 }
 
 func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
@@ -237,6 +262,7 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 		RawURL:               "/d/" + doc.ID + "/raw",
 		ShowDelete:           s.canModify(ownerID, doc),
 		ShowVisibilityToggle: ownerID != "" && doc.OwnerID != "" && ownerID == doc.OwnerID,
+		ShowRevisions:        s.canModify(ownerID, doc) && s.hasRevisions(),
 	})
 }
 

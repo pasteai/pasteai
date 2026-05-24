@@ -299,8 +299,8 @@ func revPrefix(docID string) []byte {
 	return []byte(docID + "/")
 }
 
-func (s *BoltStore) SaveRevision(_ context.Context, rev server.Revision) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
+func (s *BoltStore) SaveRevision(_ context.Context, rev server.Revision) (*server.Revision, error) {
+	err := s.db.Update(func(tx *bolt.Tx) error {
 		seq := tx.Bucket(bucketRevSeq)
 		revs := tx.Bucket(bucketRevisions)
 
@@ -340,6 +340,10 @@ func (s *BoltStore) SaveRevision(_ context.Context, rev server.Revision) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return &rev, nil
 }
 
 func (s *BoltStore) ListRevisions(_ context.Context, docID string) ([]server.Revision, error) {

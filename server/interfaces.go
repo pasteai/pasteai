@@ -52,9 +52,9 @@ type ContentBackend interface {
 // document revision history. The server detects support via type assertion.
 type RevisionStore interface {
 	Store
-	// SaveRevision stores a pre-update snapshot. Implementations assign Num and
-	// enforce the revision cap.
-	SaveRevision(ctx context.Context, rev Revision) error
+	// SaveRevision stores a pre-update snapshot. Implementations assign Num,
+	// enforce the revision cap, and return the saved revision with Num populated.
+	SaveRevision(ctx context.Context, rev Revision) (*Revision, error)
 	// ListRevisions returns all revisions for docID, newest first.
 	ListRevisions(ctx context.Context, docID string) ([]Revision, error)
 	// GetRevision returns the revision with the given num, or ErrNotFound.

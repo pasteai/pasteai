@@ -1,0 +1,210 @@
+{{template "base.html" .}}
+
+{{define "title"}}History — {{.DocTitle}} — PasteAI{{end}}
+
+{{define "body"}}
+<div class="page">
+  <div class="content-wrapper rev-browser-wrapper">
+    <nav class="doc-breadcrumb">
+      <a href="/">PasteAI</a>
+      <span class="doc-breadcrumb-sep">/</span>
+      <a href="/d/{{.DocID}}">{{.DocTitle}}</a>
+      <span class="doc-breadcrumb-sep">/</span>
+      <span>History</span>
+    </nav>
+
+    {{if not .Revisions}}
+    <div class="empty-state">
+      <div class="empty-icon" aria-hidden="true">✦</div>
+      <p class="empty-title">No revisions yet</p>
+      <p class="empty-desc">Revisions are saved each time the document is updated.</p>
+    </div>
+    {{else}}
+    <div class="rev-browser">
+      <!-- Left: revision list -->
+      <div class="rev-list" role="listbox" aria-label="Revision history">
+        {{range .Revisions}}
+        <button class="rev-row"
+                role="option"
+                data-num="{{.Num}}"
+                data-doc="{{.DocID}}"
+                data-saved="{{.SavedAt.Format "2006-01-02T15:04:05Z"}}"
+                aria-selected="false">
+          <span class="rev-num">Rev {{.Num}}</span>
+          <span class="rev-time" data-iso="{{.SavedAt.Format "2006-01-02T15:04:05Z"}}">{{.SavedAt.Format "Jan 2, 2006"}}</span>
+          <span class="rev-delta">
+            {{if or .AddedLines .RemovedLines}}
+            <span class="rev-add">+{{.AddedLines}}</span>
+            <span class="rev-remove">−{{.RemovedLines}}</span>
+            {{else}}
+            <span class="rev-nodelta">no changes</span>
+            {{end}}
+          </span>
+        </button>
+        {{end}}
+      </div>
+
+      <!-- Right: diff preview -->
+      <div class="rev-preview-panel">
+        <div class="rev-preview-header" id="rev-preview-header">
+          <span class="rev-preview-label" id="rev-preview-label">Select a revision</span>
+          <div class="rev-preview-actions" id="rev-preview-actions" hidden>
+            <a class="rev-action-btn" id="rev-view-link" href="#">View revision</a>
+            <a class="rev-action-btn rev-action-btn--primary" id="rev-diff-link" href="#">View full diff</a>
+          </div>
+        </div>
+        <pre class="rev-diff-body" id="rev-diff-body" aria-live="polite">Select a revision to preview changes</pre>
+      </div>
+    </div>
+    {{end}}
+  </div>
+</div>
+
+<!-- Mobile bottom sheet -->
+<div class="rev-sheet-overlay" id="rev-sheet-overlay" hidden onclick="closeRevSheet()"></div>
+<div class="rev-sheet" id="rev-sheet" hidden>
+  <div class="rev-sheet-header">
+    <span class="rev-preview-label" id="rev-sheet-label"></span>
+    <button class="rev-sheet-close" onclick="closeRevSheet()" aria-label="Close">✕</button>
+  </div>
+  <div class="rev-sheet-actions" id="rev-sheet-actions">
+    <a class="rev-action-btn" id="rev-sheet-view-link" href="#">View revision</a>
+    <a class="rev-action-btn rev-action-btn--primary" id="rev-sheet-diff-link" href="#">View full diff</a>
+  </div>
+  <pre class="rev-diff-body" id="rev-sheet-diff-body" aria-live="polite"></pre>
+</div>
+
+<script>
+(function() {
+  var docID = {{.DocID | printf "%q"}};
+  var currentRow = null;
+  var diffCache = {};
+
+  function relativeTime(isoStr) {
+    var now = Date.now();
+    var then = new Date(isoStr).getTime();
+    var diff = Math.floor((now - then) / 1000);
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return Math.floor(diff / 60) + ' minutes ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + ' hours ago';
+    if (diff < 86400 * 2) return 'yesterday';
+    if (diff < 86400 * 30) return Math.floor(diff / 86400) + ' days ago';
+    return new Date(isoStr).toLocaleDateString();
+  }
+
+  // Update relative timestamps.
+  document.querySelectorAll('.rev-time[data-iso]').forEach(function(el) {
+    el.textContent = relativeTime(el.dataset.iso);
+  });
+
+  function renderDiff(text) {
+    if (!text) return '<span class="rev-diff-empty">No changes</span>';
+    var lines = text.split('\n');
+    return lines.map(function(line) {
+      var cls = '';
+      if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-header';
+      else if (line.startsWith('+')) cls = 'diff-add';
+      else if (line.startsWith('-')) cls = 'diff-remove';
+      else if (line.startsWith('@@')) cls = 'diff-hunk';
+      var escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return cls ? '<span class="' + cls + '">' + escaped + '</span>' : escaped;
+    }).join('\n');
+  }
+
+  function updatePanel(row, diffText) {
+    var num = row.dataset.num;
+    var iso = row.dataset.saved;
+    var label = 'Rev ' + num + ' · ' + relativeTime(iso);
+
+    document.getElementById('rev-preview-label').textContent = label;
+    var actions = document.getElementById('rev-preview-actions');
+    actions.removeAttribute('hidden');
+    document.getElementById('rev-view-link').href = '/d/' + docID + '/revisions/' + num;
+    document.getElementById('rev-diff-link').href = '/d/' + docID + '/diff?from=' + num;
+
+    var body = document.getElementById('rev-diff-body');
+    body.innerHTML = renderDiff(diffText);
+  }
+
+  function updateSheet(row, diffText) {
+    var num = row.dataset.num;
+    var iso = row.dataset.saved;
+    var label = 'Rev ' + num + ' · ' + relativeTime(iso);
+    document.getElementById('rev-sheet-label').textContent = label;
+    document.getElementById('rev-sheet-view-link').href = '/d/' + docID + '/revisions/' + num;
+    document.getElementById('rev-sheet-diff-link').href = '/d/' + docID + '/diff?from=' + num;
+    document.getElementById('rev-sheet-diff-body').innerHTML = renderDiff(diffText);
+  }
+
+  function loadDiff(row, target) {
+    var num = row.dataset.num;
+    if (diffCache[num] !== undefined) {
+      if (target === 'panel') updatePanel(row, diffCache[num]);
+      else updateSheet(row, diffCache[num]);
+      return;
+    }
+    var body = target === 'panel'
+      ? document.getElementById('rev-diff-body')
+      : document.getElementById('rev-sheet-diff-body');
+    body.textContent = 'Loading…';
+
+    fetch('/api/documents/' + docID + '/diff?from=' + num)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        diffCache[num] = data.diff || '';
+        if (target === 'panel') updatePanel(row, diffCache[num]);
+        else updateSheet(row, diffCache[num]);
+      })
+      .catch(function() {
+        body.textContent = 'Could not load diff.';
+      });
+  }
+
+  function selectRow(row) {
+    if (currentRow) {
+      currentRow.classList.remove('active');
+      currentRow.setAttribute('aria-selected', 'false');
+    }
+    currentRow = row;
+    row.classList.add('active');
+    row.setAttribute('aria-selected', 'true');
+    loadDiff(row, 'panel');
+  }
+
+  document.querySelectorAll('.rev-row').forEach(function(row) {
+    row.addEventListener('click', function() {
+      var isMobile = window.innerWidth < 640;
+      if (isMobile) {
+        openRevSheet(row);
+      } else {
+        selectRow(row);
+      }
+    });
+  });
+
+  // Auto-select the first (latest) revision on load for desktop.
+  var first = document.querySelector('.rev-row');
+  if (first && window.innerWidth >= 640) {
+    selectRow(first);
+  }
+
+  // Mobile sheet.
+  function openRevSheet(row) {
+    document.getElementById('rev-sheet-diff-body').textContent = 'Loading…';
+    document.getElementById('rev-sheet-label').textContent = 'Rev ' + row.dataset.num;
+    document.getElementById('rev-sheet-view-link').href = '/d/' + docID + '/revisions/' + row.dataset.num;
+    document.getElementById('rev-sheet-diff-link').href = '/d/' + docID + '/diff?from=' + row.dataset.num;
+    document.getElementById('rev-sheet').removeAttribute('hidden');
+    document.getElementById('rev-sheet-overlay').removeAttribute('hidden');
+    document.body.style.overflow = 'hidden';
+    loadDiff(row, 'sheet');
+  }
+
+  window.closeRevSheet = function() {
+    document.getElementById('rev-sheet').setAttribute('hidden', '');
+    document.getElementById('rev-sheet-overlay').setAttribute('hidden', '');
+    document.body.style.overflow = '';
+  };
+})();
+</script>
+{{end}}

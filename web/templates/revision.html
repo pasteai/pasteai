@@ -1,0 +1,48 @@
+{{template "base.html" .}}
+
+{{define "extra-head"}}
+<style>{{.ChromaCSS}}</style>
+{{end}}
+
+{{define "title"}}Rev {{.Revision.Num}} — {{.DocTitle}} — PasteAI{{end}}
+
+{{define "body"}}
+<div class="page">
+  <div class="content-wrapper">
+    <div class="content-inner">
+      <nav class="doc-breadcrumb">
+        <a href="/">PasteAI</a>
+        <span class="doc-breadcrumb-sep">/</span>
+        <a href="/d/{{.DocID}}">{{.DocTitle}}</a>
+        <span class="doc-breadcrumb-sep">/</span>
+        <a href="/d/{{.DocID}}/revisions">History</a>
+        <span class="doc-breadcrumb-sep">/</span>
+        <span>Rev {{.Revision.Num}}</span>
+      </nav>
+
+      <div class="rev-banner">
+        <span class="rev-banner-label">Revision {{.Revision.Num}}</span>
+        <span class="rev-banner-time">saved {{.Revision.SavedAt.Format "January 2, 2006 at 15:04 UTC"}}</span>
+        <div class="rev-banner-actions">
+          <a class="rev-action-btn" href="/d/{{.DocID}}/diff?from={{.Revision.Num}}">View diff vs current</a>
+          <a class="rev-action-btn" href="/d/{{.DocID}}/revisions">Back to history</a>
+        </div>
+      </div>
+
+      <header class="doc-header">
+        <div class="doc-header-top">
+          <h1>{{.Revision.Title}}</h1>
+        </div>
+        <div class="doc-meta">
+          {{if .Revision.Author}}<span>by {{.Revision.Author}}</span><span>&middot;</span>{{end}}
+          <span>{{.Revision.SavedAt.Format "January 2, 2006"}}</span>
+        </div>
+      </header>
+
+      <article class="markdown-body">
+        {{.HTML.HTML}}
+      </article>
+    </div>
+  </div>
+</div>
+{{end}}
