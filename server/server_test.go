@@ -226,6 +226,13 @@ func (*alwaysFailStore) UpdateVisibility(_ context.Context, _ string, _ server.V
 func (*alwaysFailStore) Delete(_ context.Context, _ string) error { return errInjected }
 func (*alwaysFailStore) Close() error                             { return nil }
 
+// failVisibilityStore wraps a real store but fails on UpdateVisibility.
+type failVisibilityStore struct{ server.Store }
+
+func (f *failVisibilityStore) UpdateVisibility(_ context.Context, _ string, _ server.Visibility) (*server.Document, error) {
+	return nil, errInjected
+}
+
 type alwaysFailContent struct{}
 
 func (*alwaysFailContent) Put(_ context.Context, _ string, _ []byte) error { return errInjected }
@@ -1292,6 +1299,26 @@ func TestCreateDocumentRollbackFailure(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "rollback") {
 		t.Errorf("expected rollback failure in log, got: %s", logBuf.String())
+	}
+}
+
+func TestUpdateDocumentVisibilityStoreError(t *testing.T) {
+	ms := newMemStore()
+	doc, _ := ms.Create(context.Background(), server.Document{Title: "test", Content: "body"})
+	mc := newMemContent()
+	_ = mc.Put(context.Background(), doc.ID, []byte("body"))
+	ts := newServerWith(t, &failVisibilityStore{ms}, mc)
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID),
+		strings.NewReader(`{"visibility":"unlisted"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", resp.StatusCode)
 	}
 }
 
