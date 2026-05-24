@@ -2,6 +2,20 @@ package server
 
 import "time"
 
+// Revision is a snapshot of a Document captured before each update.
+// AddedLines and RemovedLines are pre-computed at save time from the diff
+// between this revision's content and the incoming new content.
+type Revision struct {
+	DocID        string     `json:"doc_id"`
+	Num          int        `json:"num"`
+	Title        string     `json:"title"`
+	Author       string     `json:"author"`
+	Visibility   Visibility `json:"visibility"`
+	SavedAt      time.Time  `json:"saved_at"`
+	AddedLines   int        `json:"added_lines"`
+	RemovedLines int        `json:"removed_lines"`
+}
+
 // Visibility controls who can access a document.
 type Visibility string
 

@@ -48,6 +48,33 @@ type ContentBackend interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// RevisionStore is optionally implemented by Store backends that support
+// document revision history. The server detects support via type assertion.
+type RevisionStore interface {
+	Store
+	// SaveRevision stores a pre-update snapshot. Implementations assign Num and
+	// enforce the revision cap.
+	SaveRevision(ctx context.Context, rev Revision) error
+	// ListRevisions returns all revisions for docID, newest first.
+	ListRevisions(ctx context.Context, docID string) ([]Revision, error)
+	// GetRevision returns the revision with the given num, or ErrNotFound.
+	GetRevision(ctx context.Context, docID string, num int) (*Revision, error)
+	// DeleteRevisions removes all revision metadata for docID.
+	DeleteRevisions(ctx context.Context, docID string) error
+}
+
+// RevisionContentBackend is optionally implemented by ContentBackend backends
+// that can store per-revision content snapshots.
+type RevisionContentBackend interface {
+	ContentBackend
+	// PutRevision stores the content of a document at a given revision number.
+	PutRevision(ctx context.Context, docID string, num int, content []byte) error
+	// GetRevision retrieves the content of a specific revision.
+	GetRevision(ctx context.Context, docID string, num int) ([]byte, error)
+	// DeleteRevisions removes all revision content for docID.
+	DeleteRevisions(ctx context.Context, docID string) error
+}
+
 // AuthProvider resolves a request to an owner identity.
 // Implementations: StaticKeyAuth (self-hosted), custom (hosted).
 type AuthProvider interface {
