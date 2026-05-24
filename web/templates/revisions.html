@@ -23,10 +23,9 @@
     {{else}}
     <div class="rev-browser">
       <!-- Left: revision list -->
-      <div class="rev-list" role="listbox" aria-label="Revision history">
+      <div class="rev-list" aria-label="Revision history">
         {{range .Revisions}}
         <button class="rev-row"
-                role="option"
                 data-num="{{.Num}}"
                 data-doc="{{.DocID}}"
                 data-saved="{{.SavedAt.Format `2006-01-02T15:04:05Z`}}"
@@ -54,7 +53,7 @@
             <a class="rev-action-btn rev-action-btn--primary" id="rev-diff-link" href="#">View full diff</a>
           </div>
         </div>
-        <pre class="rev-diff-body" id="rev-diff-body" aria-live="polite">Select a revision to preview changes</pre>
+        <pre class="rev-diff-body" id="rev-diff-body" aria-live="polite">Loading…</pre>
       </div>
     </div>
     {{end}}
@@ -64,7 +63,7 @@
 
 <!-- Mobile bottom sheet -->
 <div class="rev-sheet-overlay" id="rev-sheet-overlay" hidden onclick="closeRevSheet()"></div>
-<div class="rev-sheet" id="rev-sheet" hidden>
+<div class="rev-sheet" id="rev-sheet" hidden role="dialog" aria-modal="true" aria-label="Revision preview">
   <div class="rev-sheet-header">
     <span class="rev-preview-label" id="rev-sheet-label"></span>
     <button class="rev-sheet-close" onclick="closeRevSheet()" aria-label="Close">✕</button>
@@ -158,6 +157,14 @@
         else updateSheet(row, diffCache[num]);
       })
       .catch(function() {
+        if (target === 'panel') {
+          document.getElementById('rev-preview-actions').removeAttribute('hidden');
+          document.getElementById('rev-view-link').href = '/d/' + docID + '/revisions/' + num;
+          document.getElementById('rev-diff-link').href = '/d/' + docID + '/diff?from=' + num;
+        } else {
+          document.getElementById('rev-sheet-view-link').href = '/d/' + docID + '/revisions/' + num;
+          document.getElementById('rev-sheet-diff-link').href = '/d/' + docID + '/diff?from=' + num;
+        }
         body.textContent = 'Could not load diff.';
       });
   }
@@ -207,6 +214,10 @@
     document.getElementById('rev-sheet-overlay').style.display = 'none';
     document.body.style.overflow = '';
   };
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') { closeRevSheet(); }
+  });
 })();
 </script>
 {{end}}

@@ -33,10 +33,11 @@
         <div class="doc-header-top">
           <h1>{{.Revision.Title}}</h1>
         </div>
+        {{if .Revision.Author}}
         <div class="doc-meta">
-          {{if .Revision.Author}}<span>by {{.Revision.Author}}</span><span>&middot;</span>{{end}}
-          <span>{{.Revision.SavedAt.Format "January 2, 2006"}}</span>
+          <span>by {{.Revision.Author}}</span>
         </div>
+        {{end}}
       </header>
 
       <article class="markdown-body">
