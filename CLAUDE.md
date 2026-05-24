@@ -7,6 +7,8 @@ make build          # compile binary
 make run            # build + run server on :8080
 make test           # go test ./...
 make lint           # go vet ./...
+make style          # style checks (panics, doc comments, nil maps, context)
+make coverage       # go test -race + 80% gate
 make docker-restart # docker compose build --no-cache && up -d
 ```
 
@@ -60,3 +62,16 @@ Run `go test ./internal/renderer/...` to verify the CSS invariants if you change
 - `GET /{$}` is the home route (exact slash match). Without `{$}`, Go's mux matches all unmatched paths to `/`.
 - The bbolt time index uses `UnixNano + UUID` as the key for newest-first ordering. Two creates in the same nanosecond have undefined relative order (UUID-lexicographic).
 - `handleHome` passes `ownerFromCtx` to `List`. In self-hosted mode this is always `""`, which returns all public documents. When auth is enabled and an owner is authenticated, they'll see their own documents regardless of visibility — this is intentional for the owner's dashboard view.
+
+## Go Standards
+
+Full reference: https://pasteai.io/d/c7e7c355-e01a-4230-8430-0fbf16a8478a
+
+@.claude/rules/errors.md
+@.claude/rules/interfaces.md
+@.claude/rules/context.md
+@.claude/rules/concurrency.md
+@.claude/rules/di.md
+@.claude/rules/tdd.md
+@.claude/rules/http.md
+@.claude/rules/style.md
