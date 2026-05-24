@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.12](https://github.com/pasteai/pasteai/compare/v0.0.11...v0.0.12) (2026-05-24)
+
+
+### Features
+
+* solid visibility badge with SVG icons in doc header ([abfeccf](https://github.com/pasteai/pasteai/commit/abfeccf1daada5bfa57e252568847ed6480cadd7))
+* visibility badge, TTL countdown, debounced live search, private doc enforcement ([0867876](https://github.com/pasteai/pasteai/commit/0867876dfe132659bf1830d1905a8dfe06d5789e))
+
+
+### Bug Fixes
+
+* github icon far left, avatar/sign-out far right in nav ([6e9e345](https://github.com/pasteai/pasteai/commit/6e9e345336f572dbd63f96d685903a902441cd3f))
+* reduce search debounce to 150ms ([eff7d15](https://github.com/pasteai/pasteai/commit/eff7d151d77ce75b91c388dfdceb046da97c0034))
+* resolve staticcheck and style violations ([78d8306](https://github.com/pasteai/pasteai/commit/78d8306684f6719b3f1e9c180bf923b67f7b7e1d))
+
 ## [0.0.11](https://github.com/pasteai/pasteai/compare/v0.0.10...v0.0.11) (2026-05-21)
 
 
