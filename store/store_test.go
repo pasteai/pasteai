@@ -535,6 +535,56 @@ func TestBoltUpdateVisibilityNotFound(t *testing.T) {
 	}
 }
 
+// ── DiskContent revision tests ────────────────────────────
+
+func TestDiskRevisionPutGet(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t)
+	content := []byte("# Hello\n\nWorld")
+	if err := c.PutRevision(ctx, "doc1", 1, content); err != nil {
+		t.Fatalf("PutRevision: %v", err)
+	}
+	got, err := c.GetRevision(ctx, "doc1", 1)
+	if err != nil {
+		t.Fatalf("GetRevision: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("got %q, want %q", got, content)
+	}
+}
+
+func TestDiskRevisionGetNotFound(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t)
+	_, err := c.GetRevision(ctx, "no-doc", 99)
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestDiskRevisionDeleteRevisions(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t)
+	_ = c.PutRevision(ctx, "doc1", 1, []byte("a"))
+	_ = c.PutRevision(ctx, "doc1", 2, []byte("b"))
+	if err := c.DeleteRevisions(ctx, "doc1"); err != nil {
+		t.Fatalf("DeleteRevisions: %v", err)
+	}
+	_, err := c.GetRevision(ctx, "doc1", 1)
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound after delete, got %v", err)
+	}
+}
+
+func TestDiskRevisionDeleteRevisionsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t)
+	// Deleting non-existent revisions should not error.
+	if err := c.DeleteRevisions(ctx, "ghost-doc"); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // ── BoltStore revision tests ───────────────────────────────
 
 func makeRevision(docID string) server.Revision {
