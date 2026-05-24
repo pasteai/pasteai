@@ -11,9 +11,6 @@ import (
 // ErrNotFound is returned when a requested document does not exist.
 var ErrNotFound = errors.New("document not found")
 
-// ErrContentMissing is returned when a document's content file cannot be found.
-var ErrContentMissing = errors.New("document content file missing")
-
 // DocumentEvent identifies which document lifecycle operation just succeeded.
 type DocumentEvent string
 
@@ -88,8 +85,4 @@ func (a *StaticKeyAuth) Authenticate(r *http.Request) (string, error) {
 	return "", errUnauthorized
 }
 
-var errUnauthorized = &authError{"invalid API key"}
-
-type authError struct{ msg string }
-
-func (e *authError) Error() string { return e.msg }
+var errUnauthorized = errors.New("invalid API key")
