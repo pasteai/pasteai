@@ -324,6 +324,20 @@ func (s *srv) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existing, err := s.store.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		s.serverError(w, err)
+		return
+	}
+	if !s.canModify(ownerFromCtx(r.Context()), existing) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
+
 	s.saveRevision(r.Context(), id, req.Content)
 
 	doc, err := s.store.Update(r.Context(), id, req.Title)
@@ -530,6 +544,19 @@ func (s *srv) handleListDocuments(w http.ResponseWriter, r *http.Request) {
 
 func (s *srv) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	doc, err := s.store.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return
+		}
+		s.serverError(w, err)
+		return
+	}
+	if !s.canModify(ownerFromCtx(r.Context()), doc) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return
+	}
 	if err := s.store.Delete(r.Context(), id); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})

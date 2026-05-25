@@ -763,7 +763,7 @@ func TestHomePageStructure(t *testing.T) {
 		{"document card", `class="doc-card"`},
 		{"document title", "Hello Report"},
 		{"document author", "Claude"},
-		{"anti-FOUC script", "localStorage.getItem('pasteai-theme')"},
+		{"theme script", "/static/theme.js"},
 		{"all 6 themes present", "catppuccin-frappe"},
 	}
 	for _, c := range checks {
@@ -1770,6 +1770,188 @@ func TestViewAnonymousDocumentWithAuth(t *testing.T) {
 	html := readBody(t, resp)
 	if strings.Contains(html, `class="delete-btn"`) {
 		t.Error("delete button must not appear for an anonymous document even when authenticated")
+	}
+}
+
+// ── Ownership enforcement tests ────────────────────────────
+
+// newServerWithTwoOwners creates an auth-enabled server where "key-alice" maps
+// to ownerID "alice" and "key-bob" maps to ownerID "bob".
+func newServerWithTwoOwners(t *testing.T) (*httptest.Server, *testDB) {
+	t.Helper()
+	db := &testDB{store: newMemStore(), content: newMemContent()}
+	handler := server.NewServer(db.store, db.content, server.Options{
+		Logger: log.New(io.Discard, "", 0),
+		AuthProvider: server.NewStaticKeyAuth(map[string]string{
+			"key-alice": "alice",
+			"key-bob":   "bob",
+		}),
+	})
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	return ts, db
+}
+
+func TestUpdateDocumentForbiddenForNonOwner(t *testing.T) {
+	ts, db := newServerWithTwoOwners(t)
+	ctx := context.Background()
+
+	// Alice creates a document.
+	doc, _ := db.Create(ctx, server.Document{
+		Title:   "Alice's doc",
+		Content: "original content",
+		OwnerID: "alice",
+	})
+
+	// Bob attempts to update Alice's document — must be rejected with 403.
+	body := strings.NewReader(`{"title":"Hijacked","content":"pwned"}`)
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer key-bob")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("non-owner update: got %d, want 403", resp.StatusCode)
+	}
+
+	// Verify the document was not modified.
+	get := mustGet(t, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID))
+	defer get.Body.Close()
+	var result map[string]any
+	decodeJSON(t, get.Body, &result)
+	if result["title"] != "Alice's doc" {
+		t.Errorf("title after rejected update = %v, want Alice's doc", result["title"])
+	}
+}
+
+func TestUpdateDocumentAllowedForOwner(t *testing.T) {
+	ts, db := newServerWithTwoOwners(t)
+	ctx := context.Background()
+
+	doc, _ := db.Create(ctx, server.Document{
+		Title:   "Alice's doc",
+		Content: "original",
+		OwnerID: "alice",
+	})
+
+	body := strings.NewReader(`{"title":"Updated by Alice","content":"new content"}`)
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer key-alice")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("owner update: got %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDeleteDocumentForbiddenForNonOwner(t *testing.T) {
+	ts, db := newServerWithTwoOwners(t)
+	ctx := context.Background()
+
+	// Alice creates a document.
+	doc, _ := db.Create(ctx, server.Document{
+		Title:   "Alice's doc",
+		Content: "don't delete me",
+		OwnerID: "alice",
+	})
+
+	// Bob attempts to delete Alice's document — must be rejected with 403.
+	req, _ := http.NewRequest(http.MethodDelete,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), nil)
+	req.Header.Set("Authorization", "Bearer key-bob")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("non-owner delete: got %d, want 403", resp.StatusCode)
+	}
+
+	// Verify the document still exists.
+	get := mustGet(t, fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID))
+	defer get.Body.Close()
+	if get.StatusCode != http.StatusOK {
+		t.Errorf("doc should still exist after rejected delete: got %d, want 200", get.StatusCode)
+	}
+}
+
+func TestDeleteDocumentAllowedForOwner(t *testing.T) {
+	ts, db := newServerWithTwoOwners(t)
+	ctx := context.Background()
+
+	doc, _ := db.Create(ctx, server.Document{
+		Title:   "Alice's doc",
+		Content: "delete me",
+		OwnerID: "alice",
+	})
+
+	req, _ := http.NewRequest(http.MethodDelete,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), nil)
+	req.Header.Set("Authorization", "Bearer key-alice")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("owner delete: got %d, want 204", resp.StatusCode)
+	}
+}
+
+func TestUpdateDocumentAnonymousDocAllowedWithoutAuth(t *testing.T) {
+	// Without an authProvider, canModify always returns true — anonymous docs
+	// are freely editable in self-hosted single-user mode.
+	ts, db := newTestServer(t)
+	ctx := context.Background()
+
+	doc, _ := db.Create(ctx, server.Document{
+		Title:   "Open doc",
+		Content: "edit me",
+	})
+
+	body := strings.NewReader(`{"title":"Edited","content":"new"}`)
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("unauthenticated update on no-auth server: got %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDeleteDocumentAnonymousDocAllowedWithoutAuth(t *testing.T) {
+	// Without an authProvider, canModify always returns true.
+	ts, db := newTestServer(t)
+	ctx := context.Background()
+
+	doc, _ := db.Create(ctx, server.Document{
+		Title:   "Open doc",
+		Content: "delete me",
+	})
+
+	req, _ := http.NewRequest(http.MethodDelete,
+		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("unauthenticated delete on no-auth server: got %d, want 204", resp.StatusCode)
 	}
 }
 
