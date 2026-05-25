@@ -2,12 +2,14 @@ package renderer
 
 import (
 	"bytes"
+	"fmt"
 	"html/template"
 	"regexp"
 	"strings"
 
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	chromastyles "github.com/alecthomas/chroma/v2/styles"
+	"github.com/microcosm-cc/bluemonday"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
@@ -26,6 +28,25 @@ type Result struct {
 	HTML     template.HTML
 	Headings []Heading
 }
+
+// sanitiser is built once; UGCPolicy is a well-tested allowlist that permits
+// safe formatting tags while stripping scripts, event handlers, and dangerous
+// URI schemes. It is extended to allow the class attributes that Chroma emits
+// for syntax-highlighted code blocks (class="chroma", class="k", etc.).
+var sanitiser = func() *bluemonday.Policy {
+	p := bluemonday.UGCPolicy()
+	// Allow class attributes on elements that Chroma uses for highlighting.
+	p.AllowAttrs("class").Matching(bluemonday.SpaceSeparatedTokens).OnElements(
+		"code", "pre", "span", "div",
+	)
+	// Allow id attributes on headings so TOC anchor links work.
+	p.AllowAttrs("id").Matching(bluemonday.SpaceSeparatedTokens).OnElements(
+		"h1", "h2", "h3", "h4", "h5", "h6",
+	)
+	// Allow the checked attribute on inputs for GFM task list checkboxes.
+	p.AllowAttrs("checked", "disabled", "type").OnElements("input")
+	return p
+}()
 
 // md is built once and reused — goldmark options are stateless.
 var md = goldmark.New(
@@ -46,13 +67,16 @@ var md = goldmark.New(
 
 // Render converts markdown source to HTML and extracts headings for TOC.
 // Class-based Chroma output is used; colours come from ThemeCSS().
+// The rendered HTML is passed through bluemonday's UGC policy for defence-in-depth
+// sanitisation before being cast to template.HTML.
 func Render(source string) (*Result, error) {
 	var buf bytes.Buffer
 	if err := md.Convert([]byte(source), &buf); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("renderer: convert markdown: %w", err)
 	}
 
-	html := buf.String()
+	safe := sanitiser.SanitizeBytes(buf.Bytes())
+	html := string(safe)
 	return &Result{
 		HTML:     template.HTML(html),
 		Headings: extractHeadings(html),

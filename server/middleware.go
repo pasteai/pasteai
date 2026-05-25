@@ -55,12 +55,11 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		// unsafe-inline for script-src is required for the inline anti-FOUC and theme scripts.
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
 				"style-src 'self' 'unsafe-inline' https://api.fontshare.com; "+
 				"font-src https://api.fontshare.com; "+
-				"script-src 'self' 'unsafe-inline'; "+
+				"script-src 'self'; "+
 				"img-src 'self' data:; "+
 				"frame-ancestors 'none'")
 		next.ServeHTTP(w, r)

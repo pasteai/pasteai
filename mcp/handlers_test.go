@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -484,6 +485,148 @@ func TestHandleSearchMissingQuery(t *testing.T) {
 	}
 	if !tr.IsError {
 		t.Error("expected IsError=true for missing query")
+	}
+}
+
+// ── handleSetVisibility ────────────────────────────────────
+
+func TestHandleSetVisibilitySuccess(t *testing.T) {
+	var gotMethod, gotPath, gotVisibility string
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		var body struct{ Visibility string `json:"visibility"` }
+		json.NewDecoder(r.Body).Decode(&body)
+		gotVisibility = body.Visibility
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"id": "doc-1", "visibility": "private"})
+	}))
+
+	tr, err := s.handleSetVisibility(context.Background(), makeReq(map[string]any{
+		"id": "doc-1", "visibility": "private",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Errorf("unexpected error: %s", resultText(t, tr))
+	}
+	if gotMethod != http.MethodPatch {
+		t.Errorf("method: got %s, want PATCH", gotMethod)
+	}
+	if gotPath != "/api/documents/doc-1/visibility" {
+		t.Errorf("path: got %s", gotPath)
+	}
+	if gotVisibility != "private" {
+		t.Errorf("visibility: got %s", gotVisibility)
+	}
+	if !strings.Contains(resultText(t, tr), "private") {
+		t.Errorf("result should mention visibility: %s", resultText(t, tr))
+	}
+}
+
+func TestHandleSetVisibilityMissingID(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	tr, err := s.handleSetVisibility(context.Background(), makeReq(map[string]any{"visibility": "public"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for missing id")
+	}
+}
+
+func TestHandleSetVisibilityInvalidValue(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	tr, err := s.handleSetVisibility(context.Background(), makeReq(map[string]any{
+		"id": "doc-1", "visibility": "secret",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for invalid visibility value")
+	}
+}
+
+func TestHandleSetVisibilityNotFound(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	tr, err := s.handleSetVisibility(context.Background(), makeReq(map[string]any{
+		"id": "missing", "visibility": "public",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for 404")
+	}
+}
+
+func TestHandleSetVisibilityTransportError(t *testing.T) {
+	s := &Server{
+		baseURL: "http://127.0.0.1:19997",
+		logger:  log.New(io.Discard, "", 0),
+		httpClient: &http.Client{
+			Transport: roundTripperFunc(func(_ *http.Request) (*http.Response, error) {
+				return nil, fmt.Errorf("connection refused")
+			}),
+		},
+	}
+	tr, err := s.handleSetVisibility(context.Background(), makeReq(map[string]any{
+		"id": "doc-1", "visibility": "public",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for transport error")
+	}
+	if !strings.Contains(resultText(t, tr), "failed to reach PasteAI server") {
+		t.Errorf("expected transport error message, got: %s", resultText(t, tr))
+	}
+}
+
+func TestHandleSetVisibilityServerErrorWithBody(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": "not authorised"})
+	}))
+	tr, err := s.handleSetVisibility(context.Background(), makeReq(map[string]any{
+		"id": "doc-1", "visibility": "public",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for 403")
+	}
+	if !strings.Contains(resultText(t, tr), "not authorised") {
+		t.Errorf("expected error body in result: %s", resultText(t, tr))
+	}
+}
+
+func TestHandleSetVisibilityServerErrorNoBody(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("not json"))
+	}))
+	tr, err := s.handleSetVisibility(context.Background(), makeReq(map[string]any{
+		"id": "doc-1", "visibility": "public",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for 500 with non-JSON body")
+	}
+	if !strings.Contains(resultText(t, tr), "500") {
+		t.Errorf("expected status code in result: %s", resultText(t, tr))
 	}
 }
 

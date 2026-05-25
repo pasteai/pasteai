@@ -203,3 +203,98 @@ func TestRenderHeadingWithInlineHTML(t *testing.T) {
 		t.Errorf("heading text = %q, want Hello world", result.Headings[0].Text)
 	}
 }
+
+func TestRenderScriptTagStripped(t *testing.T) {
+	// bluemonday must strip <script> tags to prevent stored XSS.
+	md := "hello\n\n<script>alert('xss')</script>\n\nworld"
+	result, err := renderer.Render(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(result.HTML)
+	if strings.Contains(html, "<script") {
+		t.Errorf("script tag must be stripped by sanitiser: %s", html)
+	}
+	if !strings.Contains(html, "hello") || !strings.Contains(html, "world") {
+		t.Errorf("surrounding content must survive sanitisation: %s", html)
+	}
+}
+
+func TestRenderJavascriptLinkStripped(t *testing.T) {
+	// bluemonday must strip javascript: scheme URIs from links.
+	md := "[click me](javascript:alert('xss'))"
+	result, err := renderer.Render(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(result.HTML)
+	if strings.Contains(html, "javascript:") {
+		t.Errorf("javascript: URI must be stripped by sanitiser: %s", html)
+	}
+}
+
+func TestRenderImageOnerrorStripped(t *testing.T) {
+	// bluemonday must strip event handler attributes from inline HTML.
+	md := "text\n\n<img src=\"x\" onerror=\"alert('xss')\">\n\nmore"
+	result, err := renderer.Render(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(result.HTML)
+	if strings.Contains(html, "onerror") {
+		t.Errorf("onerror attribute must be stripped by sanitiser: %s", html)
+	}
+}
+
+func TestRenderDataURILinkStripped(t *testing.T) {
+	// bluemonday must strip data: URIs in links to prevent stored XSS.
+	// Goldmark alone does not sanitise data: URIs.
+	md := "[click me](data:text/html,<script>alert('xss')</script>)"
+	result, err := renderer.Render(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(result.HTML)
+	if strings.Contains(html, "data:text/html") {
+		t.Errorf("data: URI must be stripped by sanitiser: %s", html)
+	}
+}
+
+func TestRenderSanitisedByBluemonday(t *testing.T) {
+	// Goldmark strips raw HTML blocks by default, but bluemonday provides
+	// explicit defence-in-depth. This test documents the sanitisation contract
+	// and will catch any future regression if goldmark is reconfigured with
+	// WithUnsafe or the sanitiser is removed.
+	cases := []struct {
+		name    string
+		input   string
+		mustNot string
+	}{
+		{
+			name:    "script tag",
+			input:   "a\n\n<script>evil()</script>\n\nb",
+			mustNot: "<script",
+		},
+		{
+			name:    "javascript href",
+			input:   "[x](javascript:evil())",
+			mustNot: "javascript:",
+		},
+		{
+			name:    "event handler attribute",
+			input:   "a\n\n<img src=x onerror=evil()>\n\nb",
+			mustNot: "onerror",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := renderer.Render(tc.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(result.HTML), tc.mustNot) {
+				t.Errorf("output contains forbidden string %q: %s", tc.mustNot, result.HTML)
+			}
+		})
+	}
+}

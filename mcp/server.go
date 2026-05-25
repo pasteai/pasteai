@@ -232,6 +232,19 @@ func (s *Server) registerTools(srv *mcpserver.MCPServer) {
 		),
 	)
 	srv.AddTool(searchTool, s.handleSearch)
+
+	visibilityTool := mcpgo.NewTool("set_visibility",
+		mcpgo.WithDescription("Change the visibility of an existing PasteAI document"),
+		mcpgo.WithString("id",
+			mcpgo.Required(),
+			mcpgo.Description("The document ID"),
+		),
+		mcpgo.WithString("visibility",
+			mcpgo.Required(),
+			mcpgo.Description("New visibility: public, unlisted, or private"),
+		),
+	)
+	srv.AddTool(visibilityTool, s.handleSetVisibility)
 }
 
 func (s *Server) handlePublish(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -534,6 +547,51 @@ func (s *Server) handleSearch(_ context.Context, req mcpgo.CallToolRequest) (*mc
 		fmt.Fprintf(&sb, ")\n")
 	}
 	return mcpgo.NewToolResultText(sb.String()), nil
+}
+
+func (s *Server) handleSetVisibility(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	id := req.GetString("id", "")
+	visibility := req.GetString("visibility", "")
+
+	if id == "" {
+		return mcpgo.NewToolResultError("id is required"), nil
+	}
+	if visibility != "public" && visibility != "unlisted" && visibility != "private" {
+		return mcpgo.NewToolResultError("visibility must be public, unlisted, or private"), nil
+	}
+
+	body, err := json.Marshal(map[string]string{"visibility": visibility})
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to serialise request: %v", err)), nil
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPatch, s.baseURL+"/api/documents/"+id+"/visibility", bytes.NewReader(body))
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to build request: %v", err)), nil
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if s.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
+
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to reach PasteAI server: %v", err)), nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return mcpgo.NewToolResultError(fmt.Sprintf("document %q not found", id)), nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		var errBody struct{ Error string `json:"error"` }
+		if json.NewDecoder(resp.Body).Decode(&errBody) == nil && errBody.Error != "" {
+			return mcpgo.NewToolResultError(fmt.Sprintf("server error (%d): %s", resp.StatusCode, errBody.Error)), nil
+		}
+		return mcpgo.NewToolResultError(fmt.Sprintf("server returned %d", resp.StatusCode)), nil
+	}
+
+	return mcpgo.NewToolResultText(fmt.Sprintf("Document %q visibility set to %s.", id, visibility)), nil
 }
 
 // ── Embedded server helpers ────────────────────────────────
