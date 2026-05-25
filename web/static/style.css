@@ -410,6 +410,21 @@ button.nav-link {
   display: block;
 }
 
+/* ── Nav capacity dot ───────────────────────────────────── */
+
+.nav-avatar-wrap { position: relative; display: inline-block; line-height: 0; }
+.nav-avatar-wrap::after {
+  content: "";
+  position: absolute;
+  bottom: 1px; right: 1px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--color-bg);
+  display: none;
+}
+.nav-avatar-wrap.cap-warn::after { display: block; background: #f59e0b; }
+.nav-avatar-wrap.cap-full::after { display: block; background: var(--color-danger, #ef4444); }
+
 /* ── Theme Picker ────────────────────────────────────────── */
 
 .theme-picker {
@@ -1818,3 +1833,64 @@ button.nav-link {
   .rev-list { border-right: none; max-height: none; }
   .rev-browser { min-height: 0; }
 }
+
+/* ── Limit modal ─────────────────────────────────────────── */
+
+.limit-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.limit-modal {
+  background: var(--color-surface-card-strong);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 420px;
+  width: calc(100% - 2rem);
+  position: relative;
+  color: var(--color-text);
+}
+
+.limit-modal-dismiss {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  line-height: 1;
+  padding: 0.25rem;
+}
+
+.limit-modal-dismiss:hover { color: var(--color-text); }
+
+.limit-modal-msg {
+  margin: 0 0 1.25rem;
+  line-height: 1.5;
+}
+
+.limit-modal-cta {
+  display: block;
+  width: 100%;
+  padding: 0.6rem 1rem;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.limit-modal-cta:hover { background: var(--color-primary-hover); }
