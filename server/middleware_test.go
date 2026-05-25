@@ -71,6 +71,37 @@ func TestAuthErrorMessage(t *testing.T) {
 	}
 }
 
+func TestSecurityHeadersHSTS_SetOverHTTPS(t *testing.T) {
+	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	hsts := rr.Header().Get("Strict-Transport-Security")
+	if hsts == "" {
+		t.Fatal("Strict-Transport-Security not set for HTTPS request")
+	}
+	if !strings.Contains(hsts, "max-age=") {
+		t.Errorf("Strict-Transport-Security missing max-age: %s", hsts)
+	}
+}
+
+func TestSecurityHeadersHSTS_NotSetOverHTTP(t *testing.T) {
+	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if hsts := rr.Header().Get("Strict-Transport-Security"); hsts != "" {
+		t.Errorf("Strict-Transport-Security should not be set for plain HTTP, got: %s", hsts)
+	}
+}
+
 func TestSecurityHeadersCSPNoUnsafeInlineScript(t *testing.T) {
 	// script-src must not contain 'unsafe-inline' — it allows injected scripts to execute.
 	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

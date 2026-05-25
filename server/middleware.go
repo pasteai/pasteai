@@ -62,6 +62,9 @@ func securityHeaders(next http.Handler) http.Handler {
 				"script-src 'self'; "+
 				"img-src 'self' data:; "+
 				"frame-ancestors 'none'")
+		if r.Header.Get("X-Forwarded-Proto") == "https" {
+			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
