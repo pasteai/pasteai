@@ -94,7 +94,9 @@ localhost:8080/d/a3b4c5</span></code></pre>
         <div class="step-card">
           <span class="step-num">01</span>
           <h3 class="step-title">Install once</h3>
-          <p class="step-desc">One command installs the binary and registers it with Claude Code, Kiro, and opencode — works in every project from then on. Run <code>pasteai doctor</code> any time to diagnose issues.</p>
+          <p class="step-desc">One command installs the binary and registers it with Claude Code, Kiro, and opencode — works in every project from then on.</p>
+          <p class="step-desc" style="margin-top:0.5rem;font-family:monospace;font-size:0.8rem;"><code>curl -sSL https://raw.githubusercontent.com/pasteai/pasteai/main/install.sh | sh</code></p>
+          <p class="step-desc" style="margin-top:0.25rem;">Or run <code>/setup</code> in Claude Code. Run <code>pasteai doctor</code> to diagnose issues.</p>
         </div>
         <div class="step-card">
           <span class="step-num">02</span>
@@ -118,7 +120,8 @@ localhost:8080/d/a3b4c5</span></code></pre>
       <h2 class="section-title">Recent <span class="accent">Documents</span></h2>
       {{end}}
     </div>
-    <ul class="doc-list">
+    {{if not .IsSearch}}{{block "doc-tabs" .}}{{end}}{{end}}
+    <ul class="doc-list" id="doc-list">
       {{range .Documents}}
       <li class="doc-card">
         <a href="/d/{{.ID}}">
@@ -131,8 +134,8 @@ localhost:8080/d/a3b4c5</span></code></pre>
       {{end}}
     </ul>
     {{if and .NextToken (not .IsSearch)}}
-    <div class="load-more">
-      <a href="/?token={{.NextToken}}" class="load-more-btn">Load more</a>
+    <div class="load-more" id="load-more-wrap">
+      <button class="load-more-btn" id="load-more-btn" data-token="{{.NextToken}}">Load more</button>
     </div>
     {{end}}
   </section>
@@ -153,6 +156,21 @@ localhost:8080/d/a3b4c5</span></code></pre>
 </div>
 
 <script>
+function _pasteaiEsc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function _pasteaiFmtDate(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+}
+function _pasteaiRenderCard(d) {
+  var meta = d.author ? '<span class="doc-author">' + _pasteaiEsc(d.author) + '</span> &middot; ' : '';
+  meta += _pasteaiEsc(_pasteaiFmtDate(d.created_at));
+  return '<li class="doc-card"><a href="/d/' + _pasteaiEsc(d.id) + '"><div class="doc-title">' + _pasteaiEsc(d.title) + '</div><div class="doc-meta">' + meta + '</div></a></li>';
+}
+
+// Search
 (function() {
   var input = document.getElementById('search-input');
   if (!input) return;
@@ -187,28 +205,52 @@ localhost:8080/d/a3b4c5</span></code></pre>
   function renderResults(q, docs) {
     if (!resultsEl) return;
     if (!docs.length) {
-      resultsEl.innerHTML = '<div class="empty-state"><div class="empty-icon" aria-hidden="true">✦</div><p class="empty-title">No results</p><p class="empty-desc">No documents matched <code>' + esc(q) + '</code>.</p></div>';
+      resultsEl.innerHTML = '<div class="empty-state"><div class="empty-icon" aria-hidden="true">✦</div><p class="empty-title">No results</p><p class="empty-desc">No documents matched <code>' + _pasteaiEsc(q) + '</code>.</p></div>';
       return;
     }
-    var items = docs.map(function(d) {
-      var meta = d.author ? '<span class="doc-author">' + esc(d.author) + '</span> &middot; ' : '';
-      meta += esc(fmtDate(d.created_at));
-      return '<li class="doc-card"><a href="/d/' + esc(d.id) + '"><div class="doc-title">' + esc(d.title) + '</div><div class="doc-meta">' + meta + '</div></a></li>';
-    }).join('');
-    resultsEl.innerHTML = '<section class="docs-section"><div class="section-header"><h2 class="section-title">Results for \'<span class="accent">' + esc(q) + '</span>\'</h2></div><ul class="doc-list">' + items + '</ul></section>';
-  }
-
-  function fmtDate(iso) {
-    if (!iso) return '';
-    var d = new Date(iso);
-    return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
-  }
-
-  function esc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    var items = docs.map(_pasteaiRenderCard).join('');
+    resultsEl.innerHTML = '<section class="docs-section"><div class="section-header"><h2 class="section-title">Results for \'<span class="accent">' + _pasteaiEsc(q) + '</span>\'</h2></div><ul class="doc-list">' + items + '</ul></section>';
   }
 
   if (input.value.trim()) doSearch(input.value.trim());
+})();
+
+// Load more
+(function() {
+  var btn = document.getElementById('load-more-btn');
+  var wrap = document.getElementById('load-more-wrap');
+  var list = document.getElementById('doc-list');
+  if (!btn || !list) return;
+
+  btn.addEventListener('click', function() {
+    var token = btn.getAttribute('data-token');
+    if (!token) return;
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+
+    var url = '/api/documents?limit=20&token=' + encodeURIComponent(token);
+    var headers = {};
+    if (window._pasteaiApiKey) headers['Authorization'] = 'Bearer ' + window._pasteaiApiKey;
+
+    fetch(url, {headers: headers})
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        (data.documents || []).forEach(function(d) {
+          list.insertAdjacentHTML('beforeend', _pasteaiRenderCard(d));
+        });
+        if (data.next_token) {
+          btn.setAttribute('data-token', data.next_token);
+          btn.disabled = false;
+          btn.textContent = 'Load more';
+        } else {
+          wrap.remove();
+        }
+      })
+      .catch(function() {
+        btn.disabled = false;
+        btn.textContent = 'Load more';
+      });
+  });
 })();
 </script>
 {{end}}

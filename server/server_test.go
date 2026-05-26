@@ -918,7 +918,7 @@ func TestHomeSearchPaginationHidden(t *testing.T) {
 	resp := mustGet(t, ts.URL+"/?q=auth")
 	defer resp.Body.Close()
 	html := readBody(t, resp)
-	if strings.Contains(html, "load-more-btn") {
+	if strings.Contains(html, `id="load-more-btn"`) {
 		t.Error("search results page must not show the load-more pagination button")
 	}
 }
