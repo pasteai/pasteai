@@ -45,6 +45,8 @@
   var pre = document.getElementById('diff-body');
   if (!pre) return;
   var lines = pre.textContent.split('\n');
+  // Drop trailing empty line from split so we don't render a blank span at the end.
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
   var html = lines.map(function(line) {
     var cls = '';
     if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-header';
@@ -52,8 +54,9 @@
     else if (line.startsWith('-')) cls = 'diff-remove';
     else if (line.startsWith('@@')) cls = 'diff-hunk';
     var escaped = line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    return cls ? '<span class="' + cls + '">' + escaped + '</span>' : escaped;
-  }).join('\n');
+    // Wrap every line in a span so all lines are display:block with no \n gaps.
+    return '<span' + (cls ? ' class="' + cls + '"' : '') + '>' + escaped + '</span>';
+  }).join('');
   pre.innerHTML = html;
 })();
 </script>

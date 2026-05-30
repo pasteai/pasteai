@@ -1,0 +1,9 @@
+User-agent: *
+Disallow: /api/
+Disallow: /admin/
+Disallow: /oauth/
+Disallow: /auth/
+Disallow: /d/*/revisions
+Disallow: /d/*/diff
+
+Sitemap: https://pasteai.io/sitemap.xml

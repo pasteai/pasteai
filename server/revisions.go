@@ -70,6 +70,7 @@ func (s *srv) handleListRevisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderWith(w, s.revisionsTmpl, revisionsData{
+		baseData:  baseData{NavExtras: s.navFor(r), Footer: s.footer},
 		DocID:     id,
 		DocTitle:  doc.Title,
 		Revisions: revs,
@@ -128,6 +129,7 @@ func (s *srv) handleViewRevision(w http.ResponseWriter, r *http.Request) {
 		renderResult = *result
 	}
 	s.renderWith(w, s.revisionTmpl, revisionViewData{
+		baseData:  baseData{NavExtras: s.navFor(r), Footer: s.footer},
 		DocID:     id,
 		DocTitle:  doc.Title,
 		Revision:  *rev,
@@ -172,6 +174,7 @@ func (s *srv) handleDiffHTML(w http.ResponseWriter, r *http.Request) {
 	labelA := "revision " + strconv.Itoa(fromNum)
 	unified := diff.Unified(labelA, toLabel, contentA, contentB)
 	s.renderWith(w, s.diffTmpl, diffData{
+		baseData: baseData{NavExtras: s.navFor(r), Footer: s.footer},
 		DocID:    id,
 		DocTitle: doc.Title,
 		From:     fromNum,

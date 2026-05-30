@@ -37,6 +37,8 @@ type srv struct {
 	defaultVisibility Visibility
 	eventListener     EventListener
 	mcpHandler        http.Handler
+	navExtrasFunc     func(*http.Request) template.HTML
+	footer            template.HTML
 }
 
 // hasRevisions reports whether the configured store supports revision history.
@@ -71,6 +73,8 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		defaultVisibility: opts.DefaultVisibility,
 		eventListener:     opts.EventListener,
 		mcpHandler:        opts.MCPHandler,
+		navExtrasFunc:     opts.NavExtrasFunc,
+		footer:            opts.Footer,
 	}
 	s.loadTemplates()
 	s.registerRoutes(opts.HomeHandler)
@@ -139,6 +143,7 @@ func (s *srv) registerRoutes(homeHandler http.Handler) {
 // NavExtras is empty in the OSS server; the hosted tier injects login/logout HTML.
 type baseData struct {
 	NavExtras template.HTML
+	Footer    template.HTML
 }
 
 type homeData struct {
@@ -259,6 +264,7 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	s.notify(r.Context(), DocumentViewed, ownerID, doc.ID)
 	s.renderWith(w, s.documentTmpl, documentData{
+		baseData:             baseData{NavExtras: s.navFor(r), Footer: s.footer},
 		Document:             *doc,
 		RenderedHTML:         result.HTML,
 		Headings:             result.Headings,
@@ -671,6 +677,14 @@ func (s *srv) toResponse(r *http.Request, d Document) documentResponse {
 		CreatedAt:  d.CreatedAt.UTC().Format(time.RFC3339),
 		URL:        s.docURL(r, d.ID),
 	}
+}
+
+// navFor returns the NavExtras HTML for the current request by calling NavExtrasFunc if configured.
+func (s *srv) navFor(r *http.Request) template.HTML {
+	if s.navExtrasFunc != nil {
+		return s.navExtrasFunc(r)
+	}
+	return ""
 }
 
 func (s *srv) renderWith(w http.ResponseWriter, tmpl *template.Template, data any) {

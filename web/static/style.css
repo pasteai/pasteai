@@ -410,6 +410,21 @@ button.nav-link {
   display: block;
 }
 
+.nav-avatar-initial {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-accent, #6366f1);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+  border: 1px solid var(--color-border);
+}
+
 /* ── Nav capacity dot ───────────────────────────────────── */
 
 .nav-avatar-wrap { position: relative; display: inline-block; line-height: 0; }
@@ -424,6 +439,61 @@ button.nav-link {
 }
 .nav-avatar-wrap.cap-warn::after { display: block; background: #f59e0b; }
 .nav-avatar-wrap.cap-full::after { display: block; background: var(--color-danger, #ef4444); }
+
+/* ── Nav dropdown (profile menu) ──────────────────────────── */
+
+.nav-dropdown {
+  position: relative;
+}
+
+.nav-dropdown-trigger {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  line-height: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+}
+
+.nav-dropdown-trigger:focus-visible {
+  outline: 2px solid var(--color-accent, #6366f1);
+  outline-offset: 2px;
+}
+
+.nav-dropdown-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  background: var(--color-surface-card);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  min-width: 148px;
+  padding: 4px 0;
+  z-index: 200;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, .12);
+}
+
+.nav-dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  font-family: var(--font-body);
+  color: var(--color-text);
+  text-decoration: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+
+.nav-dropdown-item:hover {
+  background: var(--color-surface-interactive);
+}
 
 /* ── Theme Picker ────────────────────────────────────────── */
 
@@ -1757,10 +1827,12 @@ button.nav-link {
 }
 
 /* Diff line colouring */
-.diff-add    { display: block; background: var(--color-diff-add); border-left: 3px solid rgba(34,197,94,0.7); padding-left: 2px; }
-.diff-remove { display: block; background: var(--color-diff-remove); border-left: 3px solid rgba(239,68,68,0.7); padding-left: 2px; }
-.diff-hunk   { display: block; color: var(--color-text-muted); }
-.diff-header { display: block; color: var(--color-text-muted); font-weight: 600; }
+/* Every line is a span; all must be block so there are no \n gaps between them. */
+.rev-diff-body span { display: block; }
+.diff-add    { background: var(--color-diff-add); border-left: 3px solid rgba(34,197,94,0.7); padding-left: 2px; }
+.diff-remove { background: var(--color-diff-remove); border-left: 3px solid rgba(239,68,68,0.7); padding-left: 2px; }
+.diff-hunk   { color: var(--color-text-muted); }
+.diff-header { color: var(--color-text-muted); font-weight: 600; }
 .rev-diff-empty { color: var(--color-text-muted); font-style: italic; }
 
 /* Revision banner */

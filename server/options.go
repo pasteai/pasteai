@@ -1,6 +1,7 @@
 package server
 
 import (
+	"html/template"
 	"log"
 	"net/http"
 )
@@ -15,4 +16,6 @@ type Options struct {
 	Logger               *log.Logger  // optional; nil = log.Default()
 	EventListener        EventListener // optional; called after successful document operations
 	MCPHandler           http.Handler  // optional; when set, mounted at /mcp (streamable-HTTP MCP transport)
+	NavExtrasFunc        func(*http.Request) template.HTML // optional; called per HTML page to populate NavExtras
+	Footer               template.HTML                     // optional; injected into HTML pages that don't define a footer block
 }
