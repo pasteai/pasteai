@@ -241,6 +241,22 @@
   })();
 
   // ── Code block copy buttons ───────────────────────────────
+  function copyFallback(text, onSuccess, onFail) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand('copy') ? onSuccess() : onFail();
+    } catch(e) {
+      onFail();
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+
   document.querySelectorAll('.markdown-body pre.chroma').forEach(function(pre) {
     var btn = document.createElement('button');
     btn.className = 'copy-btn';
@@ -248,13 +264,21 @@
     btn.addEventListener('click', function() {
       var code = pre.querySelector('code');
       var text = code ? code.innerText : pre.innerText;
-      navigator.clipboard.writeText(text).then(function() {
+      function onSuccess() {
         btn.textContent = 'Copied!';
         setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
-      }).catch(function() {
+      }
+      function onFail() {
         btn.textContent = 'Error';
         setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
-      });
+      }
+      try {
+        navigator.clipboard.writeText(text).then(onSuccess).catch(function() {
+          copyFallback(text, onSuccess, onFail);
+        });
+      } catch(e) {
+        copyFallback(text, onSuccess, onFail);
+      }
     });
     pre.appendChild(btn);
   });
