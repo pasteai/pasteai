@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.14](https://github.com/pasteai/pasteai/compare/v0.0.13...v0.0.14) (2026-05-30)
+
+
+### Features
+
+* add NavExtrasFunc/Footer server options, fix diff spacing, add robots.txt ([0446e88](https://github.com/pasteai/pasteai/commit/0446e88016ee824e79ef61e28b2843c5a743f836))
+* AJAX load-more, doc-tabs block, install step fix, suggest-feature template URL ([33f36f4](https://github.com/pasteai/pasteai/commit/33f36f436118ccbeef9ed809d6b0816ac1d91e33))
+* limit modal, nav capacity dot CSS, favicon, logo ([d7df3f6](https://github.com/pasteai/pasteai/commit/d7df3f6263f854ee75efc30b65779b666117cf90))
+
+
+### Bug Fixes
+
+* add HSTS header for HTTPS requests ([4fbebd8](https://github.com/pasteai/pasteai/commit/4fbebd8b23838d39f62835e30facfd18c2cb3e2d))
+* enforce ownership on document UPDATE and DELETE ([8e7a67b](https://github.com/pasteai/pasteai/commit/8e7a67b854eb03a1fc1c1a60641fd30d421dc063))
+
 ## [0.0.13](https://github.com/pasteai/pasteai/compare/v0.0.12...v0.0.13) (2026-05-24)
 
 
