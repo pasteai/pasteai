@@ -1,4 +1,4 @@
-// app.js — limit modal lifecycle and POST /api/documents 422 handling.
+// app.js — nav dropdown, limit modal, and POST /api/documents 422 handling.
 
 // Intercept fetch calls to POST /api/documents and handle 422 limit responses.
 (function () {
@@ -30,6 +30,29 @@
   };
 })();
 
+// Nav dropdown toggle — uses event delegation so no inline onclick needed.
+document.addEventListener('click', function (e) {
+  var trigger = e.target.closest('.nav-dropdown-trigger');
+  if (trigger) {
+    var menu = trigger.nextElementSibling;
+    if (!menu) return;
+    var wasHidden = menu.hidden;
+    document.querySelectorAll('.nav-dropdown-menu').forEach(function (m) {
+      m.hidden = true;
+      if (m.previousElementSibling) m.previousElementSibling.setAttribute('aria-expanded', 'false');
+    });
+    if (wasHidden) {
+      menu.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+    }
+  } else if (!e.target.closest('.nav-dropdown')) {
+    document.querySelectorAll('.nav-dropdown-menu').forEach(function (m) {
+      m.hidden = true;
+      if (m.previousElementSibling) m.previousElementSibling.setAttribute('aria-expanded', 'false');
+    });
+  }
+});
+
 // On page load, show a modal if limit_reached is set in sessionStorage.
 document.addEventListener('DOMContentLoaded', function () {
   if (window.location.pathname.indexOf('/profile') === 0) {
@@ -50,14 +73,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
   var isPrivate = stored.type === 'private';
   var upgradeURL = (typeof stored.url === 'string' && stored.url) ? stored.url : '/profile';
-
-  var limitLabel = isPrivate ? ‘private’ : ‘public’;
-  var limitCount = isPrivate ? ‘50’ : ‘100’;
-  var msg = isCheckout
-    ? "You’ve reached your " + limitLabel + " document limit (" + limitCount + " docs). Upgrade to Pro for unlimited documents."
-    : "You’ve reached your " + limitLabel + " document limit (" + limitCount + " docs on the free plan). Remove some documents to free up space.";
-
   var isCheckout = upgradeURL.indexOf('checkout') !== -1;
+
+  var limitLabel = isPrivate ? 'private' : 'public';
+  var limitCount = isPrivate ? '50' : '100';
+  var msg = isCheckout
+    ? "You've reached your " + limitLabel + " document limit (" + limitCount + " docs). Upgrade to Pro for unlimited documents."
+    : "You've reached your " + limitLabel + " document limit (" + limitCount + " docs on the free plan). Remove some documents to free up space.";
   var ctaText = isCheckout ? 'Upgrade to Pro — $5/month' : 'Manage documents';
 
   // Build overlay.
