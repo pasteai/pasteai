@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.17](https://github.com/pasteai/pasteai/compare/v0.0.16...v0.0.17) (2026-06-03)
+
+
+### Bug Fixes
+
+* replace ExtraCSP with ExtraScriptSrc and ExtraConnectSrc to prevent duplicate CSP directives ([45ffe7a](https://github.com/pasteai/pasteai/commit/45ffe7ac78b06ab767eac7adab506ea8bba7f5f8))
+
 ## [0.0.16](https://github.com/pasteai/pasteai/compare/v0.0.15...v0.0.16) (2026-06-03)
 
 
