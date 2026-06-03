@@ -89,7 +89,13 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 }
 
 func (s *srv) loadTemplates() {
-	funcs := template.FuncMap{"cssVersion": func() string { return s.cssVersion }}
+	funcs := template.FuncMap{
+		"cssVersion": func() string { return s.cssVersion },
+		"jsonStr": func(s string) (template.JS, error) {
+			b, err := json.Marshal(s)
+			return template.JS(b), err
+		},
+	}
 	parse := func(files ...string) *template.Template {
 		return template.Must(template.New("").Funcs(funcs).ParseFS(web.FS, files...))
 	}
@@ -135,6 +141,9 @@ func (s *srv) registerRoutes(homeHandler http.Handler) {
 	if s.mcpHandler != nil {
 		s.mux.Handle("/mcp", s.mcpHandler)
 	}
+
+	s.mux.HandleFunc("GET /robots.txt", s.handleRobots)
+	s.mux.HandleFunc("GET /sitemap.xml", s.handleSitemap)
 }
 
 // ── Web UI handlers ────────────────────────────────────────
@@ -144,6 +153,7 @@ func (s *srv) registerRoutes(homeHandler http.Handler) {
 type baseData struct {
 	NavExtras template.HTML
 	Footer    template.HTML
+	SiteURL   string
 }
 
 type homeData struct {
@@ -171,6 +181,7 @@ func (s *srv) handleHome(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.renderWith(w, s.homeTmpl, homeData{
+			baseData:  baseData{NavExtras: s.navFor(r), Footer: s.footer, SiteURL: s.baseURL},
 			Documents: docs,
 			Query:     q,
 			IsSearch:  true,
@@ -187,6 +198,7 @@ func (s *srv) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderWith(w, s.homeTmpl, homeData{
+		baseData:  baseData{NavExtras: s.navFor(r), Footer: s.footer, SiteURL: s.baseURL},
 		Documents: result.Documents,
 		NextToken: result.NextToken,
 	})
@@ -264,7 +276,7 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	s.notify(r.Context(), DocumentViewed, ownerID, doc.ID)
 	s.renderWith(w, s.documentTmpl, documentData{
-		baseData:             baseData{NavExtras: s.navFor(r), Footer: s.footer},
+		baseData:             baseData{NavExtras: s.navFor(r), Footer: s.footer, SiteURL: s.baseURL},
 		Document:             *doc,
 		RenderedHTML:         result.HTML,
 		Headings:             result.Headings,
@@ -680,6 +692,61 @@ func (s *srv) toResponse(r *http.Request, d Document) documentResponse {
 }
 
 // navFor returns the NavExtras HTML for the current request by calling NavExtrasFunc if configured.
+func (s *srv) handleRobots(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprint(w, "User-agent: *\n")
+	fmt.Fprint(w, "Disallow: /api/\n")
+	fmt.Fprint(w, "Disallow: /admin/\n")
+	fmt.Fprint(w, "Disallow: /oauth/\n")
+	fmt.Fprint(w, "Disallow: /auth/\n")
+	fmt.Fprint(w, "Disallow: /d/*/revisions\n")
+	fmt.Fprint(w, "Disallow: /d/*/diff\n")
+	if s.baseURL != "" {
+		fmt.Fprintf(w, "\nSitemap: %s/sitemap.xml\n", s.baseURL)
+	}
+}
+
+func (s *srv) handleSitemap(w http.ResponseWriter, r *http.Request) {
+	if s.baseURL == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	var locs []string
+	locs = append(locs, s.baseURL+"/")
+
+	token := ""
+	for {
+		result, err := s.store.List(r.Context(), ListOptions{Limit: 500, NextToken: token})
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		for _, doc := range result.Documents {
+			locs = append(locs, s.baseURL+"/d/"+doc.ID)
+		}
+		if result.NextToken == "" || len(locs) >= 49000 {
+			break
+		}
+		token = result.NextToken
+	}
+
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>`+"\n")
+	fmt.Fprint(w, `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`+"\n")
+	for i, loc := range locs {
+		fmt.Fprint(w, "  <url>\n")
+		fmt.Fprintf(w, "    <loc>%s</loc>\n", loc)
+		if i == 0 {
+			fmt.Fprint(w, "    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n")
+		} else {
+			fmt.Fprint(w, "    <changefreq>weekly</changefreq>\n    <priority>0.7</priority>\n")
+		}
+		fmt.Fprint(w, "  </url>\n")
+	}
+	fmt.Fprint(w, `</urlset>`)
+}
+
 func (s *srv) navFor(r *http.Request) template.HTML {
 	if s.navExtrasFunc != nil {
 		return s.navExtrasFunc(r)

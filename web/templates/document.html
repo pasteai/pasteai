@@ -2,6 +2,7 @@
 
 {{define "extra-head"}}
 <style>{{.ChromaCSS}}</style>
+{{if .PageURL}}<link rel="canonical" href="{{.PageURL}}">{{end}}
 {{if .Description}}<meta name="description" content="{{.Description}}">{{end}}
 {{if .PageURL}}<meta property="og:url" content="{{.PageURL}}">{{end}}
 <meta property="og:type" content="article">
@@ -11,6 +12,8 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{{.Document.Title}} — PasteAI">
 {{if .Description}}<meta name="twitter:description" content="{{.Description}}">{{end}}
+{{if .OGImageURL}}<meta name="twitter:image" content="{{.OGImageURL}}">{{end}}
+{{if .PageURL}}<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":{{jsonStr .Document.Title}},"url":"{{.PageURL}}","datePublished":"{{.Document.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}","publisher":{"@type":"Organization","name":"PasteAI"{{if .SiteURL}},"url":"{{.SiteURL}}"{{end}}}}</script>{{end}}
 {{end}}
 
 {{define "title"}}{{.Document.Title}} — PasteAI{{end}}

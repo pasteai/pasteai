@@ -2498,3 +2498,76 @@ func TestRevisionAccessWithAuthDocNotFound(t *testing.T) {
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
+
+func TestSitemapNoBaseURL(t *testing.T) {
+	ts, _ := newTestServer(t)
+	resp := mustGet(t, ts.URL+"/sitemap.xml")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("want 404 without baseURL, got %d", resp.StatusCode)
+	}
+}
+
+func TestSitemapWithPublicDocs(t *testing.T) {
+	ts, _ := newServerWithBaseURL(t, "https://example.com")
+
+	// create public doc
+	r := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"Public Doc","content":"hello","visibility":"public"}`)
+	var created map[string]any
+	decodeJSON(t, r.Body, &created)
+	r.Body.Close()
+	pubID, _ := created["id"].(string)
+
+	// create private doc — must not appear in sitemap
+	r2 := mustPost(t, ts.URL+"/api/documents", "application/json",
+		`{"title":"Private Doc","content":"secret","visibility":"private"}`)
+	r2.Body.Close()
+
+	resp := mustGet(t, ts.URL+"/sitemap.xml")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "xml") {
+		t.Errorf("want xml content-type, got %q", ct)
+	}
+
+	body := readBody(t, resp)
+	if !strings.Contains(body, "https://example.com/") {
+		t.Error("sitemap missing home URL")
+	}
+	if !strings.Contains(body, "/d/"+pubID) {
+		t.Errorf("sitemap missing public doc %s", pubID)
+	}
+	if strings.Contains(body, "Private Doc") {
+		t.Error("sitemap must not include private doc content")
+	}
+}
+
+func TestRobotsTxt(t *testing.T) {
+	ts, _ := newTestServer(t)
+	resp := mustGet(t, ts.URL+"/robots.txt")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	body := readBody(t, resp)
+	if !strings.Contains(body, "User-agent") {
+		t.Error("robots.txt missing User-agent")
+	}
+	if !strings.Contains(body, "Disallow: /api/") {
+		t.Error("robots.txt missing /api/ disallow")
+	}
+}
+
+func TestRobotsTxtIncludesSitemapWhenBaseURLSet(t *testing.T) {
+	ts, _ := newServerWithBaseURL(t, "https://example.com")
+	resp := mustGet(t, ts.URL+"/robots.txt")
+	defer resp.Body.Close()
+	body := readBody(t, resp)
+	if !strings.Contains(body, "Sitemap: https://example.com/sitemap.xml") {
+		t.Error("robots.txt missing Sitemap directive when baseURL is set")
+	}
+}

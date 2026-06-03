@@ -1,6 +1,20 @@
 {{template "base.html" .}}
 
-{{define "title"}}PasteAI{{end}}
+{{define "title"}}PasteAI — Beautiful docs from your AI agent{{end}}
+
+{{define "meta-head"}}
+<meta name="description" content="Your AI publishes. Your team reads. Clean, themed documents with syntax highlighting and a table of contents — published directly from Claude Code, Kiro, and opencode.">
+{{if .SiteURL}}<link rel="canonical" href="{{.SiteURL}}/">{{end}}
+<meta property="og:type" content="website">
+<meta property="og:title" content="PasteAI — Beautiful docs from your AI agent">
+<meta property="og:description" content="Your AI publishes. Your team reads. Clean, themed documents with syntax highlighting — published directly from Claude Code, Kiro, and opencode.">
+{{if .SiteURL}}<meta property="og:url" content="{{.SiteURL}}/">
+<meta property="og:image" content="{{.SiteURL}}/static/og-image.svg">{{end}}
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="PasteAI — Beautiful docs from your AI agent">
+<meta name="twitter:description" content="Your AI publishes. Your team reads. Clean, themed documents with syntax highlighting — published directly from Claude Code, Kiro, and opencode.">
+{{if .SiteURL}}<meta name="twitter:image" content="{{.SiteURL}}/static/og-image.svg">{{end}}
+{{end}}
 
 {{define "body"}}
 <div class="splash">
