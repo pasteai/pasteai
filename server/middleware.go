@@ -59,7 +59,7 @@ func securityHeaders(next http.Handler) http.Handler {
 			"default-src 'self'; "+
 				"style-src 'self' 'unsafe-inline' https://api.fontshare.com; "+
 				"font-src https://api.fontshare.com; "+
-				"script-src 'self'; "+
+				"script-src 'self' https://plausible.io; "+
 				"img-src 'self' data: https://avatars.githubusercontent.com; "+
 				"frame-ancestors 'none'")
 		if r.Header.Get("X-Forwarded-Proto") == "https" {
