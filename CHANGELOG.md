@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.15](https://github.com/pasteai/pasteai/compare/v0.0.14...v0.0.15) (2026-06-03)
+
+
+### Features
+
+* add sitemap, robots.txt, and full SEO meta tags ([7a0049c](https://github.com/pasteai/pasteai/commit/7a0049cf328370fb7a7e6692d2c4e4c27e21d764))
+* replace SVG favicon with proper multi-size .ico ([783176b](https://github.com/pasteai/pasteai/commit/783176b43a0fe55267d81a65a5a7cda58bfd9142))
+
+
+### Bug Fixes
+
+* add execCommand fallback for copy button in non-secure contexts ([056a642](https://github.com/pasteai/pasteai/commit/056a64218d68ee0e8a209cca5a0566d2a0633bda))
+* move nav dropdown to app.js to satisfy CSP, allow GitHub avatar images ([ae0de72](https://github.com/pasteai/pasteai/commit/ae0de72e7a883b11411a8673e062b5ac3dbc1804))
+
 ## [0.0.14](https://github.com/pasteai/pasteai/compare/v0.0.13...v0.0.14) (2026-05-30)
 
 
