@@ -1,9 +1,5 @@
 // app.js — nav dropdown, limit modal, and POST /api/documents 422 handling.
 
-window.plausible = window.plausible || function () { (plausible.q = plausible.q || []).push(arguments) };
-window.plausible.init = window.plausible.init || function (i) { plausible.o = i || {} };
-window.plausible.init();
-
 // Intercept fetch calls to POST /api/documents and handle 422 limit responses.
 (function () {
   var origFetch = window.fetch;

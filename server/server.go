@@ -39,6 +39,7 @@ type srv struct {
 	mcpHandler        http.Handler
 	navExtrasFunc     func(*http.Request) template.HTML
 	footer            template.HTML
+	extraHead         template.HTML
 }
 
 // hasRevisions reports whether the configured store supports revision history.
@@ -75,6 +76,7 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		mcpHandler:        opts.MCPHandler,
 		navExtrasFunc:     opts.NavExtrasFunc,
 		footer:            opts.Footer,
+		extraHead:         opts.ExtraHead,
 	}
 	s.loadTemplates()
 	s.registerRoutes(opts.HomeHandler)
@@ -84,7 +86,7 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		handler = authMiddleware(opts.AuthProvider, opts.AllowAnonymousWrites, s.mux)
 	}
 	handler = gzipHandler(handler)
-	handler = securityHeaders(handler)
+	handler = securityHeaders(opts.ExtraCSP, handler)
 	return handler
 }
 
@@ -154,6 +156,7 @@ type baseData struct {
 	NavExtras template.HTML
 	Footer    template.HTML
 	SiteURL   string
+	ExtraHead template.HTML
 }
 
 type homeData struct {
@@ -169,6 +172,10 @@ type errorData struct {
 	Message string
 }
 
+func (s *srv) base(r *http.Request) baseData {
+	return baseData{NavExtras: s.navFor(r), Footer: s.footer, SiteURL: s.baseURL, ExtraHead: s.extraHead}
+}
+
 func (s *srv) handleHome(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("q"); q != "" {
 		docs, err := s.store.Search(r.Context(), SearchOptions{
@@ -181,7 +188,7 @@ func (s *srv) handleHome(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.renderWith(w, s.homeTmpl, homeData{
-			baseData:  baseData{NavExtras: s.navFor(r), Footer: s.footer, SiteURL: s.baseURL},
+			baseData:  s.base(r),
 			Documents: docs,
 			Query:     q,
 			IsSearch:  true,
@@ -198,7 +205,7 @@ func (s *srv) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderWith(w, s.homeTmpl, homeData{
-		baseData:  baseData{NavExtras: s.navFor(r), Footer: s.footer, SiteURL: s.baseURL},
+		baseData:  s.base(r),
 		Documents: result.Documents,
 		NextToken: result.NextToken,
 	})
@@ -276,7 +283,7 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	s.notify(r.Context(), DocumentViewed, ownerID, doc.ID)
 	s.renderWith(w, s.documentTmpl, documentData{
-		baseData:             baseData{NavExtras: s.navFor(r), Footer: s.footer, SiteURL: s.baseURL},
+		baseData:             s.base(r),
 		Document:             *doc,
 		RenderedHTML:         result.HTML,
 		Headings:             result.Headings,

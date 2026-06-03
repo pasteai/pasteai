@@ -18,4 +18,6 @@ type Options struct {
 	MCPHandler           http.Handler  // optional; when set, mounted at /mcp (streamable-HTTP MCP transport)
 	NavExtrasFunc        func(*http.Request) template.HTML // optional; called per HTML page to populate NavExtras
 	Footer               template.HTML                     // optional; injected into HTML pages that don't define a footer block
+	ExtraHead            template.HTML                     // optional; injected into <head> on every page
+	ExtraCSP             string                            // optional; appended to the Content-Security-Policy header
 }
