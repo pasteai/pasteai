@@ -86,7 +86,7 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		handler = authMiddleware(opts.AuthProvider, opts.AllowAnonymousWrites, s.mux)
 	}
 	handler = gzipHandler(handler)
-	handler = securityHeaders(opts.ExtraCSP, handler)
+	handler = securityHeaders(opts.ExtraScriptSrc, opts.ExtraConnectSrc, handler)
 	return handler
 }
 

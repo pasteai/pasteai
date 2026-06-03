@@ -72,7 +72,7 @@ func TestAuthErrorMessage(t *testing.T) {
 }
 
 func TestSecurityHeadersHSTS_SetOverHTTPS(t *testing.T) {
-	handler := securityHeaders("", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := securityHeaders("", "", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -90,7 +90,7 @@ func TestSecurityHeadersHSTS_SetOverHTTPS(t *testing.T) {
 }
 
 func TestSecurityHeadersHSTS_NotSetOverHTTP(t *testing.T) {
-	handler := securityHeaders("", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := securityHeaders("", "", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -104,7 +104,7 @@ func TestSecurityHeadersHSTS_NotSetOverHTTP(t *testing.T) {
 
 func TestSecurityHeadersCSPNoUnsafeInlineScript(t *testing.T) {
 	// script-src must not contain 'unsafe-inline' — it allows injected scripts to execute.
-	handler := securityHeaders("", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := securityHeaders("", "", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

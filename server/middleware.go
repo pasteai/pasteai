@@ -49,17 +49,24 @@ func authMiddleware(provider AuthProvider, allowAnonymousWrites bool, next http.
 }
 
 // securityHeaders adds security-related HTTP headers to every response.
-// extraCSP is appended to the Content-Security-Policy header when non-empty.
-func securityHeaders(extraCSP string, next http.Handler) http.Handler {
+// extraScriptSrc and extraConnectSrc are additional sources appended to their
+// respective CSP directives when non-empty (e.g. "https://plausible.io").
+func securityHeaders(extraScriptSrc, extraConnectSrc string, next http.Handler) http.Handler {
+	scriptSrc := "'self'"
+	if extraScriptSrc != "" {
+		scriptSrc += " " + extraScriptSrc
+	}
+	connectSrc := "'self'"
+	if extraConnectSrc != "" {
+		connectSrc += " " + extraConnectSrc
+	}
 	csp := "default-src 'self'; " +
 		"style-src 'self' 'unsafe-inline' https://api.fontshare.com; " +
 		"font-src https://api.fontshare.com; " +
-		"script-src 'self'; " +
+		"script-src " + scriptSrc + "; " +
+		"connect-src " + connectSrc + "; " +
 		"img-src 'self' data: https://avatars.githubusercontent.com; " +
 		"frame-ancestors 'none'"
-	if extraCSP != "" {
-		csp += "; " + extraCSP
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")

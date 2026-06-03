@@ -19,5 +19,6 @@ type Options struct {
 	NavExtrasFunc        func(*http.Request) template.HTML // optional; called per HTML page to populate NavExtras
 	Footer               template.HTML                     // optional; injected into HTML pages that don't define a footer block
 	ExtraHead            template.HTML                     // optional; injected into <head> on every page
-	ExtraCSP             string                            // optional; appended to the Content-Security-Policy header
+	ExtraScriptSrc       string                            // optional; additional sources appended to script-src
+	ExtraConnectSrc      string                            // optional; additional sources appended to connect-src
 }
