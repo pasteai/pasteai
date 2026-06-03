@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.16](https://github.com/pasteai/pasteai/compare/v0.0.15...v0.0.16) (2026-06-03)
+
+
+### Features
+
+* add ExtraHead and ExtraCSP to server Options ([32add5e](https://github.com/pasteai/pasteai/commit/32add5e473bb4f719bb8079ac9d8da45e8605227))
+* update Plausible script and allow it in CSP ([795f33f](https://github.com/pasteai/pasteai/commit/795f33f8d977cbc0ff172b0cea957a5265727315))
+
+
+### Bug Fixes
+
+* add connect-src for Plausible analytics ([7b7897e](https://github.com/pasteai/pasteai/commit/7b7897e4bf30ee88d0bfc0db9ff9d2001f8bd7ed))
+* tighten favicon crop, transparent background, square canvas ([c266302](https://github.com/pasteai/pasteai/commit/c2663025df09f9581f8689f0290d1c3a2f83e90f))
+
 ## [0.0.15](https://github.com/pasteai/pasteai/compare/v0.0.14...v0.0.15) (2026-06-03)
 
 
