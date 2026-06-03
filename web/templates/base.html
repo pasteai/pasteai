@@ -8,7 +8,7 @@
   <title>{{block "title" .}}PasteAI{{end}}</title>
   {{block "meta-head" .}}{{end}}
   {{if .SiteURL}}<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"PasteAI","url":"{{.SiteURL}}","description":"AI-generated documents with beautiful formatting, published directly from your AI agent."}</script>{{end}}
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v={{cssVersion}}">
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico?v={{cssVersion}}">
   <!-- Anti-FOUC: runs before stylesheets so the correct theme is set before first paint -->
   <script src="/static/theme.js?v={{cssVersion}}"></script>
   <script src="/static/app.js?v={{cssVersion}}" defer></script>
