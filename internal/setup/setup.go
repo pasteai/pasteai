@@ -104,14 +104,16 @@ func Run(args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: running as root; config files will be written to root's home directory.\nIf you meant to configure for user %q, run without sudo.\n", os.Getenv("SUDO_USER"))
 	}
 
+	binaryExplicit := *flagBinary != ""
+
 	// Claude Code — primary; fail hard if it can't be written.
 	cfgPath, err := claudeJSONPath()
 	if err != nil {
 		return err
 	}
-	action, err := mergeClaudeJSON(cfgPath, binaryPath, internalMode, url, apiKey)
+	action, err := mergeClaudeJSON(cfgPath, binaryPath, binaryExplicit, internalMode, url, apiKey)
 	if err != nil {
-		fallback := map[string]any{"mcpServers": map[string]any{"pasteai": mergeEntry(nil, binaryPath, internalMode, url, apiKey)}}
+		fallback := map[string]any{"mcpServers": map[string]any{"pasteai": mergeEntry(nil, binaryPath, true, internalMode, url, apiKey)}}
 		fb, _ := json.Marshal(fallback)
 		fmt.Fprintf(os.Stderr, "✗ Could not write %s: %v\n  Add this to ~/.claude.json manually:\n  %s\n", cfgPath, err, fb)
 		return err
@@ -120,7 +122,7 @@ func Run(args []string) error {
 
 	// Kiro — same mcpServers format as Claude Code.
 	if kiroPath, kiroErr := kiroJSONPath(); kiroErr == nil {
-		if kiroAction, kiroErr := mergeClaudeJSON(kiroPath, binaryPath, internalMode, url, apiKey); kiroErr != nil {
+		if kiroAction, kiroErr := mergeClaudeJSON(kiroPath, binaryPath, binaryExplicit, internalMode, url, apiKey); kiroErr != nil {
 			fmt.Fprintf(os.Stderr, "✗ Could not write %s: %v\n", kiroPath, kiroErr)
 		} else {
 			fmt.Printf("✓ %s pasteai in %s (Kiro, mode: %s)\n", kiroAction, kiroPath, userLabel(internalMode))
@@ -129,7 +131,7 @@ func Run(args []string) error {
 
 	// opencode — uses {"mcp": {...}} with a different entry shape.
 	if opencodePath, opencodeErr := opencodeConfigPath(); opencodeErr == nil {
-		if opencodeAction, opencodeErr := mergeOpencodeJSON(opencodePath, binaryPath, internalMode, url, apiKey); opencodeErr != nil {
+		if opencodeAction, opencodeErr := mergeOpencodeJSON(opencodePath, binaryPath, binaryExplicit, internalMode, url, apiKey); opencodeErr != nil {
 			fmt.Fprintf(os.Stderr, "✗ Could not write %s: %v\n", opencodePath, opencodeErr)
 		} else {
 			fmt.Printf("✓ %s pasteai in %s (opencode, mode: %s)\n", opencodeAction, opencodePath, userLabel(internalMode))
@@ -155,7 +157,7 @@ func Run(args []string) error {
 }
 
 // mergeClaudeJSON performs the JSON merge. Returns "Added" or "Updated".
-func mergeClaudeJSON(cfgPath, binaryPath, mode, url, apiKey string) (string, error) {
+func mergeClaudeJSON(cfgPath, binaryPath string, binaryExplicit bool, mode, url, apiKey string) (string, error) {
 	cfg, err := readClaudeJSON(cfgPath)
 	if err != nil {
 		return "", fmt.Errorf("reading %s: %w", cfgPath, err)
@@ -171,7 +173,16 @@ func mergeClaudeJSON(cfgPath, binaryPath, mode, url, apiKey string) (string, err
 	if existing != nil {
 		action = "Updated"
 	}
-	servers["pasteai"] = mergeEntry(existing, binaryPath, mode, url, apiKey)
+
+	if mode == modeEmbedded && existing != nil {
+		if existingEnv, _ := existing["env"].(map[string]any); existingEnv != nil {
+			if oldURL, _ := existingEnv["PASTEAI_URL"].(string); oldURL != "" && oldURL != "http://localhost:8080" {
+				fmt.Fprintf(os.Stderr, "warning: removing PASTEAI_URL=%s from existing config (switching to embedded mode)\n", oldURL)
+			}
+		}
+	}
+
+	servers["pasteai"] = mergeEntry(existing, binaryPath, binaryExplicit, mode, url, apiKey)
 	cfg["mcpServers"] = servers
 
 	if err := writeClaudeJSON(cfgPath, cfg); err != nil {
@@ -182,9 +193,17 @@ func mergeClaudeJSON(cfgPath, binaryPath, mode, url, apiKey string) (string, err
 
 // mergeEntry builds a Claude Code / Kiro MCP entry, preserving any fields or
 // env vars the user added that setup does not own.
-func mergeEntry(existing map[string]any, binaryPath, mode, url, apiKey string) map[string]any {
+// binaryExplicit must be true when the caller passed -binary explicitly; when
+// false and an existing command is present, the existing command is kept so
+// that re-running setup does not replace a user-configured binary path with
+// whatever binary happened to run setup.
+func mergeEntry(existing map[string]any, binaryPath string, binaryExplicit bool, mode, url, apiKey string) map[string]any {
 	entry := cloneMap(existing)
-	entry["command"] = binaryPath
+	if binaryExplicit {
+		entry["command"] = binaryPath
+	} else if _, hasCmd := entry["command"]; !hasCmd {
+		entry["command"] = binaryPath
+	}
 	entry["args"] = []string{"mcp"}
 
 	existingEnv, _ := existing["env"].(map[string]any)
@@ -325,10 +344,15 @@ func opencodeConfigPath() (string, error) {
 // environment vars the user added that setup does not own.
 // opencode uses {"type":"local","command":[binary,args...],"environment":{...}}
 // rather than the standard {"command":binary,"args":[...],"env":{...}}.
-func mergeOpenCodeEntry(existing map[string]any, binaryPath, mode, url, apiKey string) map[string]any {
+// binaryExplicit follows the same semantics as mergeEntry.
+func mergeOpenCodeEntry(existing map[string]any, binaryPath string, binaryExplicit bool, mode, url, apiKey string) map[string]any {
 	entry := cloneMap(existing)
 	entry["type"] = "local"
-	entry["command"] = []string{binaryPath, "mcp"}
+	if binaryExplicit {
+		entry["command"] = []string{binaryPath, "mcp"}
+	} else if _, hasCmd := entry["command"]; !hasCmd {
+		entry["command"] = []string{binaryPath, "mcp"}
+	}
 
 	existingEnv, _ := existing["environment"].(map[string]any)
 	env := cloneMap(existingEnv)
@@ -353,7 +377,7 @@ func mergeOpenCodeEntry(existing map[string]any, binaryPath, mode, url, apiKey s
 
 // mergeOpencodeJSON writes the pasteai entry into the opencode config file.
 // opencode uses {"mcp": {"pasteai": {...}}} rather than {"mcpServers": {"pasteai": {...}}}.
-func mergeOpencodeJSON(cfgPath, binaryPath, mode, url, apiKey string) (string, error) {
+func mergeOpencodeJSON(cfgPath, binaryPath string, binaryExplicit bool, mode, url, apiKey string) (string, error) {
 	cfg, err := readClaudeJSON(cfgPath)
 	if err != nil {
 		return "", fmt.Errorf("reading %s: %w", cfgPath, err)
@@ -369,7 +393,16 @@ func mergeOpencodeJSON(cfgPath, binaryPath, mode, url, apiKey string) (string, e
 	if existing != nil {
 		action = "Updated"
 	}
-	mcp["pasteai"] = mergeOpenCodeEntry(existing, binaryPath, mode, url, apiKey)
+
+	if mode == modeEmbedded && existing != nil {
+		if existingEnv, _ := existing["environment"].(map[string]any); existingEnv != nil {
+			if oldURL, _ := existingEnv["PASTEAI_URL"].(string); oldURL != "" && oldURL != "http://localhost:8080" {
+				fmt.Fprintf(os.Stderr, "warning: removing PASTEAI_URL=%s from existing config (switching to embedded mode)\n", oldURL)
+			}
+		}
+	}
+
+	mcp["pasteai"] = mergeOpenCodeEntry(existing, binaryPath, binaryExplicit, mode, url, apiKey)
 	cfg["mcp"] = mcp
 
 	if err := writeClaudeJSON(cfgPath, cfg); err != nil {

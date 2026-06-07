@@ -45,7 +45,7 @@ func TestMergeEmbedded(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "claude.json")
 
-	action, err := mergeClaudeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	action, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestMergeLocal(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "claude.json")
 
-	_, err := mergeClaudeJSON(path, "/fake/pasteai", modeLocal, "", "")
+	_, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeLocal, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestMergeRemoteWithKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "claude.json")
 
-	_, err := mergeClaudeJSON(path, "/fake/pasteai", modeRemote, "https://example.com", "mykey")
+	_, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeRemote, "https://example.com", "mykey")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestMergeRemoteNoKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "claude.json")
 
-	_, err := mergeClaudeJSON(path, "/fake/pasteai", modeRemote, "https://example.com", "")
+	_, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeRemote, "https://example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestMergeMissingFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "claude.json")
 
-	action, err := mergeClaudeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	action, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestMergeMalformedJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	action, err := mergeClaudeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	action, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestMergePreservesOtherServers(t *testing.T) {
 	data, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(path, append(data, '\n'), 0600)
 
-	_, err := mergeClaudeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	_, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,12 +186,12 @@ func TestMergeIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "claude.json")
 
-	if _, err := mergeClaudeJSON(path, "/fake/pasteai", modeEmbedded, "", ""); err != nil {
+	if _, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeEmbedded, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := os.ReadFile(path)
 
-	if _, err := mergeClaudeJSON(path, "/fake/pasteai", modeEmbedded, "", ""); err != nil {
+	if _, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeEmbedded, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := os.ReadFile(path)
@@ -214,7 +214,7 @@ func TestMergeModeSwitch(t *testing.T) {
 	data, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(path, append(data, '\n'), 0600)
 
-	action, err := mergeClaudeJSON(path, "/fake/pasteai", modeRemote, "https://example.com", "key")
+	action, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeRemote, "https://example.com", "key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestMergePreservesExtraEntryFields(t *testing.T) {
 	data, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(path, append(data, '\n'), 0600)
 
-	_, err := mergeClaudeJSON(path, "/new/pasteai", modeEmbedded, "", "")
+	_, err := mergeClaudeJSON(path, "/new/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,6 +265,33 @@ func TestMergePreservesExtraEntryFields(t *testing.T) {
 	}
 	if entry["user_field"] != "keep-me" {
 		t.Errorf("user_field was removed: %v", entry)
+	}
+}
+
+func TestMergePreservesCommandWhenImplicit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude.json")
+
+	existing := map[string]any{
+		"mcpServers": map[string]any{
+			"pasteai": map[string]any{
+				"command": "/user/configured/pasteai",
+				"args":    []any{"mcp"},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(path, append(data, '\n'), 0600)
+
+	// Simulate re-running setup without -binary: binaryExplicit=false.
+	// The setup binary is at a different path, but the existing command must be kept.
+	_, err := mergeClaudeJSON(path, "/wherever/setup/ran/from/pasteai", false, modeEmbedded, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getPasteaiEntryUnit(t, readJSONFile(t, path))
+	if entry["command"] != "/user/configured/pasteai" {
+		t.Errorf("command was overwritten: got %v, want /user/configured/pasteai", entry["command"])
 	}
 }
 
@@ -287,7 +314,7 @@ func TestMergePreservesUserEnvVars(t *testing.T) {
 	data, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(path, append(data, '\n'), 0600)
 
-	_, err := mergeClaudeJSON(path, "/new/pasteai", modeLocal, "", "")
+	_, err := mergeClaudeJSON(path, "/new/pasteai", true, modeLocal, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +351,7 @@ func TestMergeSwitchToEmbeddedRemovesURLKeys(t *testing.T) {
 	data, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(path, append(data, '\n'), 0600)
 
-	_, err := mergeClaudeJSON(path, "/new/pasteai", modeEmbedded, "", "")
+	_, err := mergeClaudeJSON(path, "/new/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +555,7 @@ func TestKiroMergeEmbedded(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp.json")
 
-	action, err := mergeClaudeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	action, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +575,7 @@ func TestKiroMergeRemote(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp.json")
 
-	_, err := mergeClaudeJSON(path, "/fake/pasteai", modeRemote, "https://pasteai.io", "mykey")
+	_, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeRemote, "https://pasteai.io", "mykey")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -570,7 +597,7 @@ func TestKiroDirCreated(t *testing.T) {
 	// Nested path that doesn't exist yet — mergeClaudeJSON must create it.
 	path := filepath.Join(dir, ".kiro", "settings", "mcp.json")
 
-	_, err := mergeClaudeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	_, err := mergeClaudeJSON(path, "/fake/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatalf("expected parent dirs to be created: %v", err)
 	}
@@ -598,7 +625,7 @@ func TestOpenCodeMergeEmbedded(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "opencode.json")
 
-	action, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	action, err := mergeOpencodeJSON(path, "/fake/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -622,7 +649,7 @@ func TestOpenCodeMergeLocal(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "opencode.json")
 
-	_, err := mergeOpencodeJSON(path, "/fake/pasteai", modeLocal, "", "")
+	_, err := mergeOpencodeJSON(path, "/fake/pasteai", true, modeLocal, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -640,7 +667,7 @@ func TestOpenCodeMergeRemoteWithKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "opencode.json")
 
-	_, err := mergeOpencodeJSON(path, "/fake/pasteai", modeRemote, "https://pasteai.io", "mykey")
+	_, err := mergeOpencodeJSON(path, "/fake/pasteai", true, modeRemote, "https://pasteai.io", "mykey")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +688,7 @@ func TestOpenCodeMergeRemoteNoKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "opencode.json")
 
-	_, err := mergeOpencodeJSON(path, "/fake/pasteai", modeRemote, "https://pasteai.io", "")
+	_, err := mergeOpencodeJSON(path, "/fake/pasteai", true, modeRemote, "https://pasteai.io", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,7 +715,7 @@ func TestOpenCodePreservesOtherKeys(t *testing.T) {
 	data, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(path, append(data, '\n'), 0600)
 
-	_, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	_, err := mergeOpencodeJSON(path, "/fake/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -710,12 +737,12 @@ func TestOpenCodeMergeIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "opencode.json")
 
-	if _, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", ""); err != nil {
+	if _, err := mergeOpencodeJSON(path, "/fake/pasteai", true, modeEmbedded, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := os.ReadFile(path)
 
-	if _, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", ""); err != nil {
+	if _, err := mergeOpencodeJSON(path, "/fake/pasteai", true, modeEmbedded, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := os.ReadFile(path)
@@ -729,10 +756,10 @@ func TestOpenCodeUpdatedAction(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "opencode.json")
 
-	if _, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", ""); err != nil {
+	if _, err := mergeOpencodeJSON(path, "/fake/pasteai", true, modeEmbedded, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	action, err := mergeOpencodeJSON(path, "/fake/pasteai", modeRemote, "https://pasteai.io", "")
+	action, err := mergeOpencodeJSON(path, "/fake/pasteai", true, modeRemote, "https://pasteai.io", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -757,7 +784,7 @@ func TestOpenCodePreservesExtraEntryFields(t *testing.T) {
 	data, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(path, append(data, '\n'), 0600)
 
-	_, err := mergeOpencodeJSON(path, "/new/pasteai", modeEmbedded, "", "")
+	_, err := mergeOpencodeJSON(path, "/new/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -768,6 +795,32 @@ func TestOpenCodePreservesExtraEntryFields(t *testing.T) {
 	}
 	if entry["user_field"] != "keep-me" {
 		t.Errorf("user_field was removed: %v", entry)
+	}
+}
+
+func TestOpenCodePreservesCommandWhenImplicit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+
+	existing := map[string]any{
+		"mcp": map[string]any{
+			"pasteai": map[string]any{
+				"type":    "local",
+				"command": []any{"/user/configured/pasteai", "mcp"},
+			},
+		},
+	}
+	data, _ := json.MarshalIndent(existing, "", "  ")
+	os.WriteFile(path, append(data, '\n'), 0600)
+
+	_, err := mergeOpencodeJSON(path, "/wherever/setup/ran/from/pasteai", false, modeEmbedded, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := getOpenCodeEntryUnit(t, readJSONFile(t, path))
+	cmd, _ := entry["command"].([]any)
+	if len(cmd) == 0 || cmd[0] != "/user/configured/pasteai" {
+		t.Errorf("command was overwritten: got %v, want [/user/configured/pasteai mcp]", entry["command"])
 	}
 }
 
@@ -790,7 +843,7 @@ func TestOpenCodePreservesUserEnvVars(t *testing.T) {
 	data, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(path, append(data, '\n'), 0600)
 
-	_, err := mergeOpencodeJSON(path, "/new/pasteai", modeLocal, "", "")
+	_, err := mergeOpencodeJSON(path, "/new/pasteai", true, modeLocal, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -827,7 +880,7 @@ func TestOpenCodeSwitchToEmbeddedRemovesURLKeys(t *testing.T) {
 	data, _ := json.MarshalIndent(existing, "", "  ")
 	os.WriteFile(path, append(data, '\n'), 0600)
 
-	_, err := mergeOpencodeJSON(path, "/new/pasteai", modeEmbedded, "", "")
+	_, err := mergeOpencodeJSON(path, "/new/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -851,7 +904,7 @@ func TestOpenCodeDirCreated(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".config", "opencode", "opencode.json")
 
-	_, err := mergeOpencodeJSON(path, "/fake/pasteai", modeEmbedded, "", "")
+	_, err := mergeOpencodeJSON(path, "/fake/pasteai", true, modeEmbedded, "", "")
 	if err != nil {
 		t.Fatalf("expected parent dirs to be created: %v", err)
 	}
