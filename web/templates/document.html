@@ -77,11 +77,12 @@
         <span>Published with <a href="https://github.com/pasteai/pasteai" target="_blank" rel="noopener">PasteAI</a> &middot; <a href="{{.RawURL}}">View source</a>{{if .ShowRevisions}} &middot; <a href="/d/{{.Document.ID}}/revisions">History</a>{{end}}</span>
         <div class="doc-footer-actions">
           {{if .ShowVisibilityToggle}}
-            {{if eq .Document.Visibility "private"}}
-              <button class="visibility-btn" onclick="setVisibility('{{.Document.ID}}', 'public')">Make public</button>
-            {{else}}
-              <button class="visibility-btn" onclick="setVisibility('{{.Document.ID}}', 'private')">Make private</button>
-            {{end}}
+          <select class="visibility-select" id="visibility-select"
+                  onchange="onVisibilityChange('{{.Document.ID}}', this)">
+            <option value="public"   {{if eq .Document.Visibility "public"}}selected{{end}}>Public</option>
+            <option value="unlisted" {{if eq .Document.Visibility "unlisted"}}selected{{end}}>Unlisted</option>
+            <option value="private"  {{if eq .Document.Visibility "private"}}selected{{end}}>Private</option>
+          </select>
           {{end}}
           {{if .ShowDelete}}<button class="delete-btn" onclick="deleteDoc('{{.Document.ID}}')">Delete</button>{{end}}
         </div>
@@ -103,6 +104,17 @@
     </div>
   </aside>
   {{end}}
+</div>
+
+<div id="vis-confirm-overlay" class="vis-confirm-overlay" hidden>
+  <div class="vis-confirm-modal">
+    <p>Make this document public?</p>
+    <p class="vis-confirm-sub">It will appear in the public feed and be discoverable by anyone.</p>
+    <div class="vis-confirm-actions">
+      <button onclick="cancelVisibilityChange()">Cancel</button>
+      <button class="vis-confirm-btn--primary" onclick="confirmVisibilityChange()">Make public</button>
+    </div>
+  </div>
 </div>
 
 <div class="modal-overlay" id="delete-modal" onclick="handleOverlayClick(event)">
@@ -160,16 +172,47 @@
     });
   }
 
-  // ── Visibility toggle ─────────────────────────────────────
-  function setVisibility(id, vis) {
+  // ── Visibility selector ───────────────────────────────────
+  var _pendingVisibility = null;
+  var _prevVisibility = '{{.Document.Visibility}}';
+
+  function onVisibilityChange(id, sel) {
+    var target = sel.value;
+    if (target === 'public') {
+      _pendingVisibility = {id: id, sel: sel};
+      document.getElementById('vis-confirm-overlay').hidden = false;
+    } else {
+      applyVisibility(id, target, sel);
+    }
+  }
+
+  function cancelVisibilityChange() {
+    if (_pendingVisibility) { _pendingVisibility.sel.value = _prevVisibility; }
+    _pendingVisibility = null;
+    document.getElementById('vis-confirm-overlay').hidden = true;
+  }
+
+  function confirmVisibilityChange() {
+    document.getElementById('vis-confirm-overlay').hidden = true;
+    if (_pendingVisibility) { applyVisibility(_pendingVisibility.id, 'public', _pendingVisibility.sel); }
+    _pendingVisibility = null;
+  }
+
+  function applyVisibility(id, vis, sel) {
     fetch('/api/documents/' + id, {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({visibility: vis})
     }).then(function(r) {
-      if (r.ok) { window.location.reload(); }
-      else { alert('Failed to update visibility — try again.'); }
-    }).catch(function() { alert('Failed to update visibility — try again.'); });
+      if (r.ok) { _prevVisibility = vis; window.location.reload(); }
+      else {
+        if (sel) sel.value = _prevVisibility;
+        alert('Failed to update visibility — try again.');
+      }
+    }).catch(function() {
+      if (sel) sel.value = _prevVisibility;
+      alert('Failed to update visibility — try again.');
+    });
   }
 
   // ── Mobile TOC ────────────────────────────────────────────
