@@ -1,6 +1,6 @@
 import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
 
-var darkThemes = new Set(['dark', 'emerald', 'catppuccin-mocha', 'catppuccin-frappe']);
+var darkThemes = new Set(['dark', 'emerald', 'catppuccin-mocha', 'catppuccin-frappe', 'arctic']);
 
 function mermaidTheme() {
   var t = document.documentElement.getAttribute('data-theme') || 'arctic';
