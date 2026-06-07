@@ -759,8 +759,8 @@ func TestHomePageStructure(t *testing.T) {
 	}{
 		{"nav logo", `class="nav-logo"`},
 		{"theme picker", `class="theme-picker"`},
-		{"document list", `class="doc-list"`},
-		{"document card", `class="doc-card"`},
+		{"document table", `class="doc-table"`},
+		{"document row", `class="doc-row"`},
 		{"document title", "Hello Report"},
 		{"document author", "Claude"},
 		{"theme script", "/static/theme.js"},
@@ -780,6 +780,48 @@ func TestHomePageEmptyState(t *testing.T) {
 	html := readBody(t, resp)
 	if !strings.Contains(html, "empty-state") {
 		t.Error("expected empty-state element when no documents")
+	}
+}
+
+// ── Home table layout (020) ───────────────────────────────
+
+func TestHomeTable_PublicFeed(t *testing.T) {
+	ts, db := newTestServer(t)
+	db.store.Create(context.Background(), server.Document{
+		Title: "A Doc", Content: "c", Author: "Alice", Visibility: server.VisibilityPublic,
+	})
+	resp := mustGet(t, ts.URL+"/")
+	defer resp.Body.Close()
+	body := readBody(t, resp)
+	if !strings.Contains(body, "<table") {
+		t.Error("want <table in home page")
+	}
+	// <th> only appears in server-rendered thead, not in JS (JS uses td)
+	if strings.Contains(body, `<th class="doc-table-vis"`) {
+		t.Error("public feed should not contain Visibility header th")
+	}
+	if !strings.Contains(body, `class="doc-table-author"`) {
+		t.Error("public feed should contain Author column")
+	}
+	if !strings.Contains(body, `_pasteaiShowVisibility = false`) {
+		t.Error("want _pasteaiShowVisibility=false in page")
+	}
+}
+
+func TestHomeTable_ShowVisibilityFalse_NoVisibilityHeader(t *testing.T) {
+	ts, db := newTestServer(t)
+	db.store.Create(context.Background(), server.Document{
+		Title: "My Doc", Content: "c", Visibility: server.VisibilityPublic,
+	})
+	resp := mustGet(t, ts.URL+"/")
+	defer resp.Body.Close()
+	body := readBody(t, resp)
+	// <th> only appears in server-rendered thead, not in JS (JS uses td)
+	if strings.Contains(body, `<th class="doc-table-vis"`) {
+		t.Error("ShowVisibility=false should not render visibility column header")
+	}
+	if !strings.Contains(body, `_pasteaiShowVisibility = false`) {
+		t.Error("want _pasteaiShowVisibility=false in page")
 	}
 }
 

@@ -161,10 +161,11 @@ type baseData struct {
 
 type homeData struct {
 	baseData
-	Documents []Document
-	NextToken string
-	Query     string
-	IsSearch  bool
+	Documents      []Document
+	NextToken      string
+	Query          string
+	IsSearch       bool
+	ShowVisibility bool
 }
 
 type errorData struct {

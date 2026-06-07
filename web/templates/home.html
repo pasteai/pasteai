@@ -135,18 +135,42 @@ localhost:8080/d/a3b4c5</span></code></pre>
       {{end}}
     </div>
     {{if not .IsSearch}}{{block "doc-tabs" .}}{{end}}{{end}}
-    <ul class="doc-list" id="doc-list">
-      {{range .Documents}}
-      <li class="doc-card">
-        <a href="/d/{{.ID}}">
-          <div class="doc-title">{{.Title}}</div>
-          <div class="doc-meta">
-            {{if .Author}}<span class="doc-author">{{.Author}}</span> &middot; {{end}}{{.CreatedAt.Format "Jan 2, 2006"}}
-          </div>
-        </a>
-      </li>
+    <table class="doc-table">
+      {{if not .IsSearch}}
+      <thead>
+        <tr>
+          <th class="doc-table-title">Title</th>
+          {{if .ShowVisibility}}
+          <th class="doc-table-vis">Visibility</th>
+          {{else}}
+          <th class="doc-table-author">Author</th>
+          {{end}}
+          <th class="doc-table-date">Date</th>
+        </tr>
+      </thead>
       {{end}}
-    </ul>
+      <tbody id="doc-list">
+        {{range .Documents}}
+        <tr class="doc-row">
+          <td class="doc-table-title"><a href="/d/{{.ID}}">{{.Title}}</a></td>
+          {{if $.ShowVisibility}}
+          <td class="doc-table-vis">
+            {{if eq .Visibility "public"}}
+            <span class="doc-badge doc-badge--public"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>public</span>
+            {{else if eq .Visibility "unlisted"}}
+            <span class="doc-badge doc-badge--unlisted"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>unlisted</span>
+            {{else if eq .Visibility "private"}}
+            <span class="doc-badge doc-badge--private"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>private</span>
+            {{end}}
+          </td>
+          {{else}}
+          <td class="doc-table-author">{{.Author}}</td>
+          {{end}}
+          <td class="doc-table-date">{{.CreatedAt.Format "Jan 2, 2006"}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
     {{if and .NextToken (not .IsSearch)}}
     <div class="load-more" id="load-more-wrap">
       <button class="load-more-btn" id="load-more-btn" data-token="{{.NextToken}}">Load more</button>
@@ -170,6 +194,8 @@ localhost:8080/d/a3b4c5</span></code></pre>
 </div>
 
 <script>
+window._pasteaiShowVisibility = {{if .ShowVisibility}}true{{else}}false{{end}};
+
 function _pasteaiEsc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -178,10 +204,17 @@ function _pasteaiFmtDate(iso) {
   var d = new Date(iso);
   return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
 }
-function _pasteaiRenderCard(d) {
-  var meta = d.author ? '<span class="doc-author">' + _pasteaiEsc(d.author) + '</span> &middot; ' : '';
-  meta += _pasteaiEsc(_pasteaiFmtDate(d.created_at));
-  return '<li class="doc-card"><a href="/d/' + _pasteaiEsc(d.id) + '"><div class="doc-title">' + _pasteaiEsc(d.title) + '</div><div class="doc-meta">' + meta + '</div></a></li>';
+var _visBadge = {
+  'public':   '<span class="doc-badge doc-badge--public"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>public</span>',
+  'unlisted': '<span class="doc-badge doc-badge--unlisted"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>unlisted</span>',
+  'private':  '<span class="doc-badge doc-badge--private"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>private</span>'
+};
+function _pasteaiRenderRow(d) {
+  var showVis = window._pasteaiShowVisibility;
+  var mid = showVis
+    ? '<td class="doc-table-vis">' + (_visBadge[d.visibility] || '') + '</td>'
+    : '<td class="doc-table-author">' + _pasteaiEsc(d.author || '') + '</td>';
+  return '<tr class="doc-row"><td class="doc-table-title"><a href="/d/' + _pasteaiEsc(d.id) + '">' + _pasteaiEsc(d.title) + '</a></td>' + mid + '<td class="doc-table-date">' + _pasteaiEsc(_pasteaiFmtDate(d.created_at)) + '</td></tr>';
 }
 
 // Search
@@ -222,8 +255,8 @@ function _pasteaiRenderCard(d) {
       resultsEl.innerHTML = '<div class="empty-state"><div class="empty-icon" aria-hidden="true">✦</div><p class="empty-title">No results</p><p class="empty-desc">No documents matched <code>' + _pasteaiEsc(q) + '</code>.</p></div>';
       return;
     }
-    var items = docs.map(_pasteaiRenderCard).join('');
-    resultsEl.innerHTML = '<section class="docs-section"><div class="section-header"><h2 class="section-title">Results for \'<span class="accent">' + _pasteaiEsc(q) + '</span>\'</h2></div><ul class="doc-list">' + items + '</ul></section>';
+    var rows = docs.map(_pasteaiRenderRow).join('');
+    resultsEl.innerHTML = '<section class="docs-section"><div class="section-header"><h2 class="section-title">Results for \'<span class="accent">' + _pasteaiEsc(q) + '</span>\'</h2></div><table class="doc-table"><tbody>' + rows + '</tbody></table></section>';
   }
 
   if (input.value.trim()) doSearch(input.value.trim());
@@ -250,7 +283,7 @@ function _pasteaiRenderCard(d) {
       .then(function(r) { return r.json(); })
       .then(function(data) {
         (data.documents || []).forEach(function(d) {
-          list.insertAdjacentHTML('beforeend', _pasteaiRenderCard(d));
+          list.insertAdjacentHTML('beforeend', _pasteaiRenderRow(d));
         });
         if (data.next_token) {
           btn.setAttribute('data-token', data.next_token);

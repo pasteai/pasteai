@@ -971,48 +971,24 @@ button.nav-link {
 
 /* ── Document List ────────────────────────────────────────── */
 
-.doc-list { list-style: none; }
-
-.doc-card {
-  background: var(--color-surface-card);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  margin-bottom: 10px;
-  transition: all 0.25s cubic-bezier(.4,0,.2,1);
-}
-.doc-card:hover {
-  transform: translateY(-3px);
-  border-color: var(--color-border-accent);
-  box-shadow: 0 12px 40px var(--shadow-primary);
-}
-
-.doc-card a {
-  display: block;
-  padding: 1rem 1.25rem;
-  color: var(--color-text);
-  text-decoration: none;
-}
-.doc-card a:hover { text-decoration: none; }
-
-.doc-title {
-  font-family: var(--font-display);
-  font-size: 1rem;
+.doc-table { width: 100%; border-collapse: collapse; }
+.doc-table th {
+  text-align: left;
+  font-size: 0.75rem;
   font-weight: 600;
-  color: var(--color-text);
-}
-
-.doc-meta {
-  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   color: var(--color-text-muted);
-  margin-top: 4px;
+  padding: 0 0.75rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
 }
-
-.doc-author {
-  color: var(--color-primary);
-  font-weight: 500;
-}
+.doc-row td { border-bottom: 1px solid var(--color-border); padding: 0.6rem 0.75rem; }
+.doc-row:hover td { background: var(--color-surface-interactive); }
+.doc-table-title a { color: var(--color-text); text-decoration: none; font-weight: 500; }
+.doc-table-title a:hover { color: var(--color-primary); }
+.doc-table-author { color: var(--color-text-muted); font-size: 0.85rem; }
+.doc-table-date { color: var(--color-text-muted); font-size: 0.85rem; white-space: nowrap; }
+.doc-table-vis { white-space: nowrap; }
 
 /* ── Load more ───────────────────────────────────────────── */
 
@@ -1359,7 +1335,7 @@ button.nav-link {
   align-items: center;
   gap: 0.5rem;
 }
-.visibility-btn {
+.visibility-select {
   background: color-mix(in srgb, var(--color-text-muted) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-text-muted) 30%, transparent);
   border-radius: 4px;
@@ -1367,13 +1343,49 @@ button.nav-link {
   font-size: 0.8rem;
   font-family: inherit;
   cursor: pointer;
-  padding: 3px 10px;
+  padding: 3px 6px;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.visibility-btn:hover {
+.visibility-select:hover {
   background: color-mix(in srgb, var(--color-text-muted) 20%, transparent);
   border-color: color-mix(in srgb, var(--color-text-muted) 60%, transparent);
   color: var(--color-text);
+}
+.vis-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.vis-confirm-overlay[hidden] { display: none; }
+.vis-confirm-modal {
+  background: var(--color-surface-card);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  max-width: 360px;
+  width: 90%;
+}
+.vis-confirm-modal p { margin: 0 0 0.5rem; font-weight: 500; }
+.vis-confirm-sub { color: var(--color-text-muted); font-size: 0.9rem; font-weight: 400 !important; }
+.vis-confirm-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.25rem; }
+.vis-confirm-actions button {
+  background: color-mix(in srgb, var(--color-text-muted) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-text-muted) 30%, transparent);
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 5px 14px;
+}
+.vis-confirm-btn--primary {
+  background: var(--color-primary) !important;
+  border-color: var(--color-primary) !important;
+  color: #fff !important;
 }
 .delete-btn {
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
