@@ -247,18 +247,29 @@
   // ── TOC active highlight ──────────────────────────────────
   (function() {
     var headings = document.querySelectorAll('.markdown-body h1[id], .markdown-body h2[id], .markdown-body h3[id]');
-    var tocLinks = document.querySelectorAll('.toc-panel .toc-item a');
+    var tocLinks = document.querySelectorAll('.toc-panel .toc-item a, .toc-mobile .toc-item a');
     if (!headings.length || !tocLinks.length) return;
 
+    // Build one entry per ID. Mobile links follow desktop in DOM order; later
+    // entries for the same ID overwrite earlier ones, so on narrow viewports
+    // (where .toc-panel is display:none) the mobile links win.
     var linkMap = {};
-    tocLinks.forEach(function(a) { linkMap[a.getAttribute('href').slice(1)] = a; });
+    tocLinks.forEach(function(a) {
+      var id = a.getAttribute('href').slice(1);
+      if (!linkMap[id]) linkMap[id] = [];
+      linkMap[id].push(a);
+    });
 
-    var active = null;
-    function setActive(a) {
-      if (active === a) return;
-      if (active) active.classList.remove('toc-active');
-      active = a;
-      if (active) active.classList.add('toc-active');
+    var activeId = null;
+    function setActive(id) {
+      if (activeId === id) return;
+      if (activeId && linkMap[activeId]) {
+        linkMap[activeId].forEach(function(a) { a.classList.remove('toc-active'); });
+      }
+      activeId = id;
+      if (activeId && linkMap[activeId]) {
+        linkMap[activeId].forEach(function(a) { a.classList.add('toc-active'); });
+      }
     }
 
     function update() {
@@ -271,7 +282,7 @@
           best = headings[i];
         }
       }
-      setActive(best ? linkMap[best.id] : null);
+      setActive(best ? best.id : null);
     }
 
     var ticking = false;
