@@ -1316,6 +1316,23 @@ button.nav-link {
 .markdown-body pre:hover .copy-btn { opacity: 1; }
 .copy-btn:hover { background: var(--color-surface-hover); color: var(--color-text); }
 
+/* ── Mermaid diagrams ────────────────────────────────────── */
+
+.mermaid {
+  margin: 1.5rem 0;
+  padding: 1.25rem 1rem;
+  background: var(--color-surface-card-strong);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
 /* ── Document footer ─────────────────────────────────────── */
 
 .doc-footer {
