@@ -251,6 +251,7 @@ type documentData struct {
 	ShowDelete           bool
 	ShowVisibilityToggle bool
 	ShowRevisions        bool
+	HasMermaid           bool
 }
 
 func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
@@ -296,6 +297,7 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 		ShowDelete:           s.canModify(ownerID, doc),
 		ShowVisibilityToggle: ownerID != "" && doc.OwnerID != "" && ownerID == doc.OwnerID,
 		ShowRevisions:        s.canModify(ownerID, doc) && s.hasRevisions(),
+		HasMermaid:           result.HasMermaid,
 	})
 }
 

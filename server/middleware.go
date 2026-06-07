@@ -52,7 +52,7 @@ func authMiddleware(provider AuthProvider, allowAnonymousWrites bool, next http.
 // extraScriptSrc and extraConnectSrc are additional sources appended to their
 // respective CSP directives when non-empty (e.g. "https://plausible.io").
 func securityHeaders(extraScriptSrc, extraConnectSrc string, next http.Handler) http.Handler {
-	scriptSrc := "'self'"
+	scriptSrc := "'self' https://cdn.jsdelivr.net"
 	if extraScriptSrc != "" {
 		scriptSrc += " " + extraScriptSrc
 	}

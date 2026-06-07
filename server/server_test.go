@@ -2613,3 +2613,74 @@ func TestRobotsTxtIncludesSitemapWhenBaseURLSet(t *testing.T) {
 		t.Error("robots.txt missing Sitemap directive when baseURL is set")
 	}
 }
+
+// ── Mermaid script tag (021) ─────────────────────────────
+
+func TestHandleViewDocument_MermaidScript(t *testing.T) {
+	ts, db := newTestServer(t)
+	doc, _ := db.Create(context.Background(), server.Document{
+		Title: "Diagram", Content: "```mermaid\ngraph TD\n    A --> B\n```\n", Visibility: server.VisibilityPublic,
+	})
+	resp := mustGet(t, ts.URL+"/d/"+doc.ID)
+	defer resp.Body.Close()
+	body := readBody(t, resp)
+	if !strings.Contains(body, "mermaid-init.js") {
+		t.Error("want mermaid-init.js script tag for doc with mermaid block")
+	}
+}
+
+func TestHandleViewDocument_NoMermaidScript(t *testing.T) {
+	ts, db := newTestServer(t)
+	doc, _ := db.Create(context.Background(), server.Document{
+		Title: "Plain", Content: "# Hello", Visibility: server.VisibilityPublic,
+	})
+	resp := mustGet(t, ts.URL+"/d/"+doc.ID)
+	defer resp.Body.Close()
+	body := readBody(t, resp)
+	if strings.Contains(body, "mermaid-init.js") {
+		t.Error("want no mermaid-init.js for doc without mermaid block")
+	}
+}
+
+// ── Visibility selector (019) ─────────────────────────────
+
+func TestVisibilitySelect_RenderedForOwner(t *testing.T) {
+	const apiKey = "testkey"
+	ts, db := newServerWithAuth(t, apiKey)
+	doc, _ := db.store.Create(context.Background(), server.Document{
+		Title:      "My Doc",
+		Content:    "content",
+		Visibility: server.VisibilityPrivate,
+		OwnerID:    "owner",
+	})
+	_ = db.content.Put(context.Background(), doc.ID, []byte("content"))
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/d/"+doc.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /d/%s: %v", doc.ID, err)
+	}
+	defer resp.Body.Close()
+	body := readBody(t, resp)
+	for _, want := range []string{`visibility-select`, `value="public"`, `value="unlisted"`, `value="private"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("want %q in rendered HTML", want)
+		}
+	}
+}
+
+func TestVisibilitySelect_NotRenderedWithoutAuth(t *testing.T) {
+	ts, db := newTestServer(t)
+	doc, _ := db.store.Create(context.Background(), server.Document{
+		Title:      "Public Doc",
+		Content:    "content",
+		Visibility: server.VisibilityPublic,
+	})
+	_ = db.content.Put(context.Background(), doc.ID, []byte("content"))
+	resp := mustGet(t, ts.URL+"/d/"+doc.ID)
+	defer resp.Body.Close()
+	body := readBody(t, resp)
+	if strings.Contains(body, "visibility-select") {
+		t.Error("visibility-select should not be rendered without auth")
+	}
+}

@@ -3,6 +3,7 @@ package renderer
 import (
 	"bytes"
 	"fmt"
+	gohtml "html"
 	"html/template"
 	"regexp"
 	"strings"
@@ -25,8 +26,9 @@ type Heading struct {
 
 // Result is the output of rendering a markdown document.
 type Result struct {
-	HTML     template.HTML
-	Headings []Heading
+	HTML       template.HTML
+	Headings   []Heading
+	HasMermaid bool // true when at least one mermaid fenced code block was present
 }
 
 // sanitiser is built once; UGCPolicy is a well-tested allowlist that permits
@@ -75,12 +77,36 @@ func Render(source string) (*Result, error) {
 		return nil, fmt.Errorf("renderer: convert markdown: %w", err)
 	}
 
-	safe := sanitiser.SanitizeBytes(buf.Bytes())
+	transformed, hasMermaid := transformMermaid(buf.Bytes())
+	safe := sanitiser.SanitizeBytes(transformed)
 	html := string(safe)
 	return &Result{
-		HTML:     template.HTML(html),
-		Headings: extractHeadings(html),
+		HTML:       template.HTML(html),
+		Headings:   extractHeadings(html),
+		HasMermaid: hasMermaid,
 	}, nil
+}
+
+// mermaidRE matches fenced code blocks with language "mermaid" as Goldmark emits them.
+// The (?s) flag allows . to match newlines. Chroma may wrap with additional spans or not,
+// depending on whether it recognises the language — either way the code element is matched.
+var mermaidRE = regexp.MustCompile(`(?s)<pre[^>]*><code[^>]*class="language-mermaid"[^>]*>(.*?)</code></pre>`)
+
+// transformMermaid replaces Goldmark-rendered mermaid code blocks with <div class="mermaid">
+// containing the raw diagram source. Returns the transformed HTML and whether any replacement
+// was made. The raw source is HTML-escaped so browsers decode it correctly via textContent.
+func transformMermaid(html []byte) ([]byte, bool) {
+	found := false
+	result := mermaidRE.ReplaceAllFunc(html, func(match []byte) []byte {
+		found = true
+		m := mermaidRE.FindSubmatch(match)
+		if m == nil {
+			return match
+		}
+		raw := gohtml.UnescapeString(stripTags(string(m[1])))
+		return []byte(`<div class="mermaid">` + gohtml.EscapeString(raw) + `</div>`)
+	})
+	return result, found
 }
 
 // ThemeCSS returns a CSS string with Chroma token colours scoped to each

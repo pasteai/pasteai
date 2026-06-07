@@ -175,7 +175,7 @@ func (s *Server) registerTools(srv *mcpserver.MCPServer) {
 		),
 		mcpgo.WithString("content",
 			mcpgo.Required(),
-			mcpgo.Description("The document content in markdown format"),
+			mcpgo.Description("The document content in markdown format. Mermaid diagram blocks (```mermaid) are rendered as diagrams."),
 		),
 		mcpgo.WithString("author",
 			mcpgo.Description("Optional author name (e.g. the AI model name)"),

@@ -298,3 +298,45 @@ func TestRenderSanitisedByBluemonday(t *testing.T) {
 		})
 	}
 }
+
+// ── Mermaid transform (021) ───────────────────────────────
+
+func TestRender_Mermaid_HasMermaidTrue(t *testing.T) {
+	src := "# Title\n\n```mermaid\ngraph TD\n    A --> B\n```\n"
+	result, err := renderer.Render(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.HasMermaid {
+		t.Error("want HasMermaid=true for mermaid fenced block")
+	}
+	html := string(result.HTML)
+	if !strings.Contains(html, `<div class="mermaid">`) {
+		t.Errorf("want <div class=\"mermaid\"> in output, got: %s", html)
+	}
+	if strings.Contains(html, `<code class="language-mermaid"`) {
+		t.Error("want original code block replaced, not preserved")
+	}
+}
+
+func TestRender_Mermaid_HasMermaidFalse(t *testing.T) {
+	result, err := renderer.Render("```go\nfmt.Println(\"hi\")\n```")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.HasMermaid {
+		t.Error("want HasMermaid=false for non-mermaid code block")
+	}
+}
+
+func TestRender_Mermaid_ArrowsEscaped(t *testing.T) {
+	src := "```mermaid\ngraph TD\n    A --> B\n```\n"
+	result, err := renderer.Render(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(result.HTML)
+	if !strings.Contains(html, `--&gt;`) {
+		t.Errorf("want --> HTML-escaped as --&gt; inside mermaid div, got: %s", html)
+	}
+}
