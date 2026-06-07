@@ -189,10 +189,11 @@ func (s *srv) handleHome(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.renderWith(w, s.homeTmpl, homeData{
-			baseData:  s.base(r),
-			Documents: docs,
-			Query:     q,
-			IsSearch:  true,
+			baseData:       s.base(r),
+			Documents:      docs,
+			Query:          q,
+			IsSearch:       true,
+			ShowVisibility: ownerFromCtx(r.Context()) != "",
 		})
 		return
 	}
@@ -206,9 +207,10 @@ func (s *srv) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.renderWith(w, s.homeTmpl, homeData{
-		baseData:  s.base(r),
-		Documents: result.Documents,
-		NextToken: result.NextToken,
+		baseData:       s.base(r),
+		Documents:      result.Documents,
+		NextToken:      result.NextToken,
+		ShowVisibility: ownerFromCtx(r.Context()) != "",
 	})
 }
 

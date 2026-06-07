@@ -825,6 +825,28 @@ func TestHomeTable_ShowVisibilityFalse_NoVisibilityHeader(t *testing.T) {
 	}
 }
 
+func TestHomeTable_AuthenticatedOwner_ShowsVisibilityColumn(t *testing.T) {
+	const apiKey = "testkey"
+	ts, db := newServerWithAuth(t, apiKey)
+	db.store.Create(context.Background(), server.Document{
+		Title: "Private Doc", Visibility: server.VisibilityPrivate, OwnerID: "owner",
+	})
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/", nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	defer resp.Body.Close()
+	body := readBody(t, resp)
+	if !strings.Contains(body, `<th class="doc-table-vis"`) {
+		t.Error("authenticated owner should see visibility column header")
+	}
+	if !strings.Contains(body, `_pasteaiShowVisibility = true`) {
+		t.Error("want _pasteaiShowVisibility=true for authenticated owner")
+	}
+}
+
 // ── Search endpoint tests ──────────────────────────────────
 
 func TestSearchEndpointReturnsMatches(t *testing.T) {

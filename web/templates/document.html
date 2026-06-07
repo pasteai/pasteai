@@ -254,17 +254,35 @@
     tocLinks.forEach(function(a) { linkMap[a.getAttribute('href').slice(1)] = a; });
 
     var active = null;
-    var observer = new IntersectionObserver(function(entries) {
-      entries.forEach(function(entry) {
-        if (entry.isIntersecting) {
-          if (active) active.classList.remove('toc-active');
-          active = linkMap[entry.target.id];
-          if (active) active.classList.add('toc-active');
-        }
-      });
-    }, { rootMargin: '-10% 0px -80% 0px' });
+    function setActive(a) {
+      if (active === a) return;
+      if (active) active.classList.remove('toc-active');
+      active = a;
+      if (active) active.classList.add('toc-active');
+    }
 
-    headings.forEach(function(h) { observer.observe(h); });
+    function update() {
+      // Find the last heading whose top edge is at or above 30% of the viewport.
+      // Iterating in DOM order means the last match is the deepest heading in view.
+      var threshold = window.innerHeight * 0.3;
+      var best = headings[0];
+      for (var i = 0; i < headings.length; i++) {
+        if (headings[i].getBoundingClientRect().top <= threshold) {
+          best = headings[i];
+        }
+      }
+      setActive(best ? linkMap[best.id] : null);
+    }
+
+    var ticking = false;
+    window.addEventListener('scroll', function() {
+      if (!ticking) {
+        requestAnimationFrame(function() { update(); ticking = false; });
+        ticking = true;
+      }
+    }, {passive: true});
+
+    update();
   })();
 
   // ── TTL countdown ─────────────────────────────────────────
