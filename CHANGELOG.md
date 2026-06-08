@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.0.18](https://github.com/pasteai/pasteai/compare/v0.0.17...v0.0.18) (2026-06-08)
+
+
+### Features
+
+* add Mermaid diagram rendering with conditional script loading ([80fc542](https://github.com/pasteai/pasteai/commit/80fc54213b0065412d806ee7e0a2077263bb4000))
+* default visibility to private and replace binary toggle with three-state selector ([828259f](https://github.com/pasteai/pasteai/commit/828259f0a645aab36e1efa9005817fefd2718cc5))
+* replace card layout with compact table, add visibility badge column ([6f4098c](https://github.com/pasteai/pasteai/commit/6f4098cf8a636008fa2729a1874e467c35df9236))
+
+
+### Bug Fixes
+
+* add arctic to dark themes for Mermaid rendering ([7719e34](https://github.com/pasteai/pasteai/commit/7719e342719690ec96b4384a3c5c4d3d3c0e10b0))
+* CSP inline scripts, ToC tracking, visibility badge UX and colours ([2fb4ff0](https://github.com/pasteai/pasteai/commit/2fb4ff0267d547b8f8a3f7813232543a7cd7609c))
+* **setup:** preserve existing command and warn when nuking remote URL ([97752be](https://github.com/pasteai/pasteai/commit/97752be7e217a3f51323e6fbcbf0ba8a922e6940))
+* show visibility column for authenticated owner, fix ToC scroll tracking ([099881b](https://github.com/pasteai/pasteai/commit/099881bacdbe57168d98dd56fd55df15d44b5066))
+* use document capture for ToC scroll, add card styling to Mermaid diagrams ([238f662](https://github.com/pasteai/pasteai/commit/238f66241de4c0799090999a44129fe66c934ec3))
+* visibility column for authenticated owner, ToC scroll tracking, Mermaid dark theme support ([9b0dceb](https://github.com/pasteai/pasteai/commit/9b0dceb9ac7d879710609a06ecdcf510967c34f6))
+
 ## [0.0.17](https://github.com/pasteai/pasteai/compare/v0.0.16...v0.0.17) (2026-06-03)
 
 
