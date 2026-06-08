@@ -45,17 +45,17 @@
         <div class="doc-header-top">
           <h1>{{.Document.Title}}</h1>
           {{if eq .Document.Visibility "public"}}
-          <span class="doc-badge doc-badge--public">
+          <span id="vis-badge" class="doc-badge doc-badge--public">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
             public
           </span>
           {{else if eq .Document.Visibility "unlisted"}}
-          <span class="doc-badge doc-badge--unlisted">
+          <span id="vis-badge" class="doc-badge doc-badge--unlisted">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
             unlisted
           </span>
           {{else if eq .Document.Visibility "private"}}
-          <span class="doc-badge doc-badge--private">
+          <span id="vis-badge" class="doc-badge doc-badge--private">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             private
           </span>
@@ -199,14 +199,26 @@
     _pendingVisibility = null;
   }
 
+  var _visBadgeSVG = {
+    'public':   '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+    'unlisted': '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+    'private':  '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
+  };
+
   function applyVisibility(id, vis, sel) {
     fetch('/api/documents/' + id, {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({visibility: vis})
     }).then(function(r) {
-      if (r.ok) { _prevVisibility = vis; window.location.reload(); }
-      else {
+      if (r.ok) {
+        _prevVisibility = vis;
+        var badge = document.getElementById('vis-badge');
+        if (badge) {
+          badge.className = 'doc-badge doc-badge--' + vis;
+          badge.innerHTML = _visBadgeSVG[vis] + '\n            ' + vis + '\n          ';
+        }
+      } else {
         if (sel) sel.value = _prevVisibility;
         alert('Failed to update visibility — try again.');
       }
@@ -246,56 +258,31 @@
 
   // ── TOC active highlight ──────────────────────────────────
   (function() {
-    var headings = document.querySelectorAll('.markdown-body h1[id], .markdown-body h2[id], .markdown-body h3[id]');
-    var tocLinks = document.querySelectorAll('.toc-panel .toc-item a, .toc-mobile .toc-item a');
+    var headings = Array.prototype.slice.call(document.querySelectorAll('.markdown-body h1[id], .markdown-body h2[id], .markdown-body h3[id]'));
+    var tocLinks = Array.prototype.slice.call(document.querySelectorAll('.toc-panel .toc-item a, .toc-mobile .toc-item a'));
     if (!headings.length || !tocLinks.length) return;
 
-    // Build one entry per ID. Mobile links follow desktop in DOM order; later
-    // entries for the same ID overwrite earlier ones, so on narrow viewports
-    // (where .toc-panel is display:none) the mobile links win.
-    var linkMap = {};
-    tocLinks.forEach(function(a) {
-      var id = a.getAttribute('href').slice(1);
-      if (!linkMap[id]) linkMap[id] = [];
-      linkMap[id].push(a);
-    });
-
-    var activeId = null;
-    function setActive(id) {
-      if (activeId === id) return;
-      if (activeId && linkMap[activeId]) {
-        linkMap[activeId].forEach(function(a) { a.classList.remove('toc-active'); });
-      }
-      activeId = id;
-      if (activeId && linkMap[activeId]) {
-        linkMap[activeId].forEach(function(a) { a.classList.add('toc-active'); });
-      }
-    }
+    // A heading is "active" once it has scrolled past the sticky nav (56px + buffer).
+    var NAV_OFFSET = 72;
+    var lastActiveHref = null;
 
     function update() {
-      // Find the last heading whose top edge is at or above 30% of the viewport.
-      // Iterating in DOM order means the last match is the deepest heading in view.
-      var threshold = window.innerHeight * 0.3;
-      var best = headings[0];
+      var activeHref = '#' + headings[0].id;
       for (var i = 0; i < headings.length; i++) {
-        if (headings[i].getBoundingClientRect().top <= threshold) {
-          best = headings[i];
+        if (headings[i].getBoundingClientRect().top <= NAV_OFFSET) {
+          activeHref = '#' + headings[i].id;
         }
       }
-      setActive(best ? best.id : null);
-    }
-
-    var ticking = false;
-    function onScroll() {
-      if (!ticking) {
-        requestAnimationFrame(function() { update(); ticking = false; });
-        ticking = true;
+      if (activeHref === lastActiveHref) return;
+      lastActiveHref = activeHref;
+      for (var j = 0; j < tocLinks.length; j++) {
+        var isActive = tocLinks[j].getAttribute('href') === activeHref;
+        if (isActive) tocLinks[j].classList.add('toc-active');
+        else tocLinks[j].classList.remove('toc-active');
       }
     }
-    // Use capture on document so scroll events from any container are caught,
-    // including when html { height: 100% } makes the html element the scroll root.
-    document.addEventListener('scroll', onScroll, {passive: true, capture: true});
 
+    window.addEventListener('scroll', update, { passive: true });
     update();
   })();
 

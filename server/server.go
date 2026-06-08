@@ -297,7 +297,7 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 		OGImageURL:           s.baseURL + "/static/og-image.svg",
 		RawURL:               "/d/" + doc.ID + "/raw",
 		ShowDelete:           s.canModify(ownerID, doc),
-		ShowVisibilityToggle: ownerID != "" && doc.OwnerID != "" && ownerID == doc.OwnerID,
+		ShowVisibilityToggle: s.canModify(ownerID, doc),
 		ShowRevisions:        s.canModify(ownerID, doc) && s.hasRevisions(),
 		HasMermaid:           result.HasMermaid,
 	})
@@ -405,7 +405,7 @@ func (s *srv) handleUpdateDocument(w http.ResponseWriter, r *http.Request) {
 		doc.Content = req.Content
 	} else {
 		raw, err := s.content.Get(r.Context(), id)
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			s.serverError(w, err)
 			return
 		}

@@ -1437,7 +1437,8 @@ func TestUpdateDocumentVisibilityStoreError(t *testing.T) {
 func TestUpdateDocumentContentGetError(t *testing.T) {
 	ms := newMemStore()
 	doc, _ := ms.Create(context.Background(), server.Document{Title: "test"})
-	// content not seeded — content.Get returns ErrNotFound
+	// content not seeded — content.Get returns ErrNotFound.
+	// A missing content file should not block title/visibility updates.
 	ts := newServerWith(t, ms, newMemContent())
 	req, _ := http.NewRequest(http.MethodPut,
 		fmt.Sprintf("%s/api/documents/%s", ts.URL, doc.ID),
@@ -1448,8 +1449,8 @@ func TestUpdateDocumentContentGetError(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500 when content cannot be fetched", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 — missing content should not block title/visibility update", resp.StatusCode)
 	}
 }
 
@@ -2691,7 +2692,7 @@ func TestVisibilitySelect_RenderedForOwner(t *testing.T) {
 	}
 }
 
-func TestVisibilitySelect_NotRenderedWithoutAuth(t *testing.T) {
+func TestVisibilitySelect_RenderedInNoAuthMode(t *testing.T) {
 	ts, db := newTestServer(t)
 	doc, _ := db.store.Create(context.Background(), server.Document{
 		Title:      "Public Doc",
@@ -2702,7 +2703,25 @@ func TestVisibilitySelect_NotRenderedWithoutAuth(t *testing.T) {
 	resp := mustGet(t, ts.URL+"/d/"+doc.ID)
 	defer resp.Body.Close()
 	body := readBody(t, resp)
+	if !strings.Contains(body, "visibility-select") {
+		t.Error("visibility-select should be rendered in no-auth (OSS) mode")
+	}
+}
+
+func TestVisibilitySelect_NotRenderedForAnonymousOnAuthServer(t *testing.T) {
+	const apiKey = "secret"
+	ts, db := newServerWithAuth(t, apiKey)
+	doc, _ := db.store.Create(context.Background(), server.Document{
+		Title:      "Public Doc",
+		OwnerID:    "owner",
+		Content:    "content",
+		Visibility: server.VisibilityPublic,
+	})
+	_ = db.content.Put(context.Background(), doc.ID, []byte("content"))
+	resp := mustGet(t, ts.URL+"/d/"+doc.ID)
+	defer resp.Body.Close()
+	body := readBody(t, resp)
 	if strings.Contains(body, "visibility-select") {
-		t.Error("visibility-select should not be rendered without auth")
+		t.Error("visibility-select should not be rendered for anonymous user on auth server")
 	}
 }
