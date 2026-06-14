@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.19](https://github.com/pasteai/pasteai/compare/v0.0.18...v0.0.19) (2026-06-14)
+
+
+### Features
+
+* add inline review/commenting system ([6b4846e](https://github.com/pasteai/pasteai/commit/6b4846e3918d626e40178facf2eea983f2272a5f))
+
 ## [0.0.18](https://github.com/pasteai/pasteai/compare/v0.0.17...v0.0.18) (2026-06-08)
 
 
