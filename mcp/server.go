@@ -233,6 +233,18 @@ func (s *Server) registerTools(srv *mcpserver.MCPServer) {
 	)
 	srv.AddTool(searchTool, s.handleSearch)
 
+	listReviewsTool := mcpgo.NewTool("list_reviews",
+		mcpgo.WithDescription("List human reviews (comments) on a PasteAI document. Use this to read feedback before revising with update_document."),
+		mcpgo.WithString("id",
+			mcpgo.Required(),
+			mcpgo.Description("The document ID"),
+		),
+		mcpgo.WithBoolean("include_resolved",
+			mcpgo.Description("Include resolved comments in the response (default false)"),
+		),
+	)
+	srv.AddTool(listReviewsTool, s.handleListReviews)
+
 	visibilityTool := mcpgo.NewTool("set_visibility",
 		mcpgo.WithDescription("Change the visibility of an existing PasteAI document"),
 		mcpgo.WithString("id",
@@ -592,6 +604,81 @@ func (s *Server) handleSetVisibility(_ context.Context, req mcpgo.CallToolReques
 	}
 
 	return mcpgo.NewToolResultText(fmt.Sprintf("Document %q visibility set to %s.", id, visibility)), nil
+}
+
+func (s *Server) handleListReviews(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	id := req.GetString("id", "")
+	if id == "" {
+		return mcpgo.NewToolResultError("id is required"), nil
+	}
+	includeResolved := req.GetBool("include_resolved", false)
+
+	httpReq, err := http.NewRequest(http.MethodGet, s.baseURL+"/api/documents/"+id+"/comments", nil)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to build request: %v", err)), nil
+	}
+	if s.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
+
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to reach PasteAI server: %v", err)), nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return mcpgo.NewToolResultError(fmt.Sprintf("document %q not found", id)), nil
+	}
+	if resp.StatusCode == http.StatusNotImplemented || resp.StatusCode == http.StatusMethodNotAllowed {
+		return mcpgo.NewToolResultError("review system not available on this server"), nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return mcpgo.NewToolResultError(fmt.Sprintf("server returned %d", resp.StatusCode)), nil
+	}
+
+	var comments []struct {
+		ID         string `json:"id"`
+		Author     string `json:"author"`
+		Body       string `json:"body"`
+		QuotedText string `json:"quoted_text"`
+		Resolved   bool   `json:"resolved"`
+		CreatedAt  string `json:"created_at"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&comments); err != nil {
+		return mcpgo.NewToolResultError("failed to parse server response"), nil
+	}
+
+	var sb strings.Builder
+	count := 0
+	for _, c := range comments {
+		if !includeResolved && c.Resolved {
+			continue
+		}
+		count++
+		status := "open"
+		if c.Resolved {
+			status = "resolved"
+		}
+		author := c.Author
+		if author == "" {
+			author = "anonymous"
+		}
+		if count == 1 {
+			fmt.Fprintf(&sb, "## Reviews for document %s\n\n", id)
+		}
+		fmt.Fprintf(&sb, "[%s] %s (%s)\n", status, author, c.CreatedAt)
+		fmt.Fprintf(&sb, "> %q\n", c.QuotedText)
+		fmt.Fprintf(&sb, "%s\n\n---\n\n", c.Body)
+	}
+
+	if count == 0 {
+		if includeResolved {
+			return mcpgo.NewToolResultText(fmt.Sprintf("No reviews found for document %q.", id)), nil
+		}
+		return mcpgo.NewToolResultText(fmt.Sprintf("No open reviews for document %q.", id)), nil
+	}
+	return mcpgo.NewToolResultText(sb.String()), nil
 }
 
 // ── Embedded server helpers ────────────────────────────────

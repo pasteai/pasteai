@@ -2,6 +2,66 @@
 
 {{define "extra-head"}}
 <style>{{.ChromaCSS}}</style>
+{{if .HasComments}}<style>
+/* ── Comment sidebar ─────────────────────────── */
+.comment-toggle-btn{position:fixed;bottom:24px;right:24px;z-index:100;padding:8px 14px;border-radius:20px;border:1px solid var(--color-border,#d0d7de);background:var(--color-surface-card,#fff);color:var(--color-text,#1f2328);font-size:13px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12);-webkit-touch-callout:none;user-select:none;transition:background .15s,color .15s,border-color .15s}
+.comment-toggle-btn--ready{background:var(--color-accent,#0969da);color:#fff;border-color:var(--color-accent,#0969da);box-shadow:0 2px 12px rgba(9,105,218,.35)}
+/* P0 fix: sidebar is a fixed drawer; scrim covers the rest of the page on mobile */
+.comment-sidebar-scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:98}
+@media(max-width:639px){.comment-sidebar-scrim:not([hidden]){display:block}}
+.comment-sidebar{position:fixed;top:0;right:0;width:min(300px,85vw);height:100vh;overflow-y:auto;border-left:1px solid var(--color-border,#d0d7de);background:var(--color-surface-card,#fff);z-index:99;padding:16px;box-shadow:-4px 0 16px rgba(0,0,0,.12)}
+.comment-sidebar-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-weight:600;font-size:14px}
+.comment-sidebar-close{background:none;border:none;cursor:pointer;font-size:20px;line-height:1;color:var(--color-text-muted,#57606a);padding:4px 8px}
+.comment-entry{border:1px solid var(--color-border,#d0d7de);border-radius:6px;padding:10px;margin-bottom:8px;font-size:13px;cursor:default;transition:border-color .15s}
+.comment-entry--active,.comment-entry:hover{border-color:var(--color-accent,#0969da)}
+.comment-entry--resolved{opacity:.55}
+.comment-entry--stale{border-style:dashed}
+.comment-entry-header{display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap}
+.comment-entry-author{font-weight:600}
+/* P1 fix: stale label now more prominent with warning icon */
+.comment-stale-label{font-size:11px;color:#9a6700;background:#fff8c5;border:1px solid #d4a72c;border-radius:3px;padding:1px 5px;font-style:normal}
+.comment-entry-quote{margin:4px 0;padding:4px 8px;border-left:3px solid var(--color-border,#d0d7de);font-size:12px;color:var(--color-text-muted,#57606a);white-space:pre-wrap;word-break:break-word;overflow-wrap:break-word}
+.comment-entry-body{margin:6px 0 8px;word-break:break-word;overflow-wrap:break-word}
+.comment-entry-actions{display:flex;gap:6px}
+.comment-btn{padding:3px 8px;border:1px solid var(--color-border,#d0d7de);border-radius:4px;background:none;cursor:pointer;font-size:12px}
+.comment-btn--danger{color:#cf222e;border-color:#cf222e}
+/* P1 discoverability: hint toast */
+.comment-hint{position:fixed;bottom:68px;right:24px;z-index:101;padding:8px 14px;border-radius:8px;background:var(--color-surface-card,#fff);border:1px solid var(--color-border,#d0d7de);font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.12);max-width:220px}
+/* ── Anchors ─────────────────────────────────── */
+mark.comment-anchor{background:rgba(255,220,0,.4);border-radius:2px;cursor:pointer;transition:background .15s,box-shadow .15s}
+mark.comment-anchor--active,mark.comment-anchor:hover{background:rgba(255,180,0,.7);box-shadow:0 0 0 2px rgba(255,180,0,.4)}
+mark.comment-anchor--resolved{background:rgba(0,180,80,.15)}
+/* ── Selection float button ──────────────────── */
+.add-comment-float-btn{position:fixed;z-index:110;padding:6px 14px;border-radius:16px;border:none;background:var(--color-accent,#0969da);color:#fff;font-size:13px;font-weight:500;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);-webkit-touch-callout:none;user-select:none}
+/* ── Add-comment popover (desktop) ──────────── */
+.add-comment-popover{position:fixed;z-index:120;width:min(300px,calc(100vw - 16px));background:var(--color-surface-card,#fff);border:1px solid var(--color-border,#d0d7de);border-radius:8px;padding:14px;box-shadow:0 4px 20px rgba(0,0,0,.18)}
+/* Mobile: full-width bottom sheet; JS controls `bottom` via visualViewport */
+@media(max-width:639px){
+  .add-comment-popover{
+    left:0!important;top:auto!important;
+    width:100%!important;max-width:100%;
+    border-radius:16px 16px 0 0;
+    padding:16px;padding-bottom:max(16px,env(safe-area-inset-bottom));
+    box-shadow:0 -4px 24px rgba(0,0,0,.2);
+    overflow-y:auto;
+    transition:bottom .15s ease-out;
+  }
+}
+.add-comment-popover label{display:block;font-size:12px;font-weight:600;color:var(--color-text-muted,#57606a);margin-bottom:3px}
+.add-comment-popover textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:80px;padding:7px 9px;border:1px solid var(--color-border,#d0d7de);border-radius:4px;font-size:13px;font-family:inherit;background:var(--color-surface,#f6f8fa);color:var(--color-text,#1f2328)}
+.add-comment-popover input[type=text]{width:100%;box-sizing:border-box;padding:6px 9px;border:1px solid var(--color-border,#d0d7de);border-radius:4px;font-size:13px;font-family:inherit;background:var(--color-surface,#f6f8fa);color:var(--color-text,#1f2328)}
+.add-comment-field{margin-top:8px}
+.add-comment-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}
+.add-comment-actions button{padding:6px 14px;border-radius:4px;border:1px solid var(--color-border,#d0d7de);cursor:pointer;font-size:13px}
+.add-comment-actions button:last-child{background:var(--color-accent,#0969da);color:#fff;border-color:var(--color-accent,#0969da)}
+.add-comment-actions button:last-child:disabled{opacity:.6;cursor:not-allowed}
+/* Scrim behind bottom sheet on mobile; touch-action:none blocks scroll-through
+   without needing position:fixed on <body> (which breaks iOS fixed children) */
+.add-comment-scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:119;touch-action:none}
+@media(max-width:639px){.add-comment-scrim:not([hidden]){display:block}}
+/* Quoted text preview shown inside the comment form */
+.add-comment-quote-preview{margin:0 0 10px;padding:6px 10px;border-left:3px solid var(--color-accent,#0969da);font-size:12px;color:var(--color-text-muted,#57606a);word-break:break-word;overflow-wrap:break-word;font-style:italic}
+</style>{{end}}
 {{if .PageURL}}<link rel="canonical" href="{{.PageURL}}">{{end}}
 {{if .Description}}<meta name="description" content="{{.Description}}">{{end}}
 {{if .PageURL}}<meta property="og:url" content="{{.PageURL}}">{{end}}
@@ -128,6 +188,56 @@
   </div>
 </div>
 
+{{if .HasComments}}
+<!-- P1 discoverability: always visible, label changes when 0 comments -->
+<button id="comment-toggle-btn" class="comment-toggle-btn" onclick="toggleCommentSidebar()" aria-label="Open reviews">
+  Reviews <span id="comment-count">…</span>
+</button>
+
+<!-- P1 discoverability: hint toast shown when no comments yet -->
+<div id="comment-hint" class="comment-hint" hidden role="status">
+  Select any text in the document to add a review.
+</div>
+
+<!-- P0 mobile fix: scrim closes sidebar on tap outside -->
+<div id="comment-sidebar-scrim" class="comment-sidebar-scrim" hidden></div>
+
+<div id="comment-sidebar" class="comment-sidebar" hidden>
+  <div class="comment-sidebar-header">
+    <span>Reviews</span>
+    <button class="comment-sidebar-close" onclick="toggleCommentSidebar()" aria-label="Close reviews panel">×</button>
+  </div>
+  <div id="comment-list"></div>
+</div>
+
+<button id="add-comment-float-btn" class="add-comment-float-btn" hidden
+        onclick="showAddCommentForm()" aria-label="Add comment to selected text">
+  + Comment
+</button>
+
+<div id="add-comment-scrim" class="add-comment-scrim" hidden onclick="cancelAddComment()"></div>
+<div id="add-comment-popover" class="add-comment-popover" hidden role="dialog" aria-modal="true" aria-label="Add comment">
+  <p id="comment-quote-preview" class="add-comment-quote-preview"></p>
+  <div class="add-comment-field">
+    <label for="comment-body-input">Comment</label>
+    <textarea id="comment-body-input" placeholder="Describe your feedback or suggestion…" rows="3"></textarea>
+  </div>
+  <div class="add-comment-field">
+    <label for="comment-author-input">Your name <span style="font-weight:400">(optional)</span></label>
+    <input id="comment-author-input" type="text" placeholder="Anonymous">
+  </div>
+  <div class="add-comment-actions">
+    <button onclick="cancelAddComment()">Cancel</button>
+    <button onclick="submitAddComment()">Submit</button>
+  </div>
+</div>
+
+<script src="/static/comments.js?v={{jsVersion}}"></script>
+<script>
+{{if .ShowDelete}}window._pasteaiCanManageComments = true;{{end}}
+initComments('{{.Document.ID}}');
+</script>
+{{end}}
 {{if .HasMermaid}}<script type="module" src="/static/mermaid-init.js"></script>{{end}}
 <script>
   // ── Delete modal ──────────────────────────────────────────

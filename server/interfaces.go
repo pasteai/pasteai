@@ -8,8 +8,11 @@ import (
 	"strings"
 )
 
-// ErrNotFound is returned when a requested document does not exist.
+// ErrNotFound is returned when a requested document or comment does not exist.
 var ErrNotFound = errors.New("document not found")
+
+// ErrForbidden is returned when the requester lacks permission to perform an action.
+var ErrForbidden = errors.New("forbidden")
 
 // DocumentEvent identifies which document lifecycle operation just succeeded.
 type DocumentEvent string

@@ -725,6 +725,179 @@ func TestRevisionIsolatedByDoc(t *testing.T) {
 	}
 }
 
+// ── BoltStore comment tests ────────────────────────────────
+
+func TestBoltAddComment(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
+
+	c, err := s.AddComment(ctx, server.Comment{
+		DocID:      doc.ID,
+		Author:     "Alice",
+		Body:       "Needs work",
+		StartChar:  0,
+		EndChar:    5,
+		QuotedText: "hello",
+	})
+	if err != nil {
+		t.Fatalf("AddComment: %v", err)
+	}
+	if c.ID == "" {
+		t.Error("expected non-empty ID")
+	}
+	if c.CreatedAt.IsZero() {
+		t.Error("expected non-zero CreatedAt")
+	}
+	if c.Body != "Needs work" {
+		t.Errorf("body = %q, want Needs work", c.Body)
+	}
+}
+
+func TestBoltListComments(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
+
+	s.AddComment(ctx, server.Comment{DocID: doc.ID, Body: "first", QuotedText: "a", StartChar: 0, EndChar: 1})
+	time.Sleep(time.Millisecond)
+	s.AddComment(ctx, server.Comment{DocID: doc.ID, Body: "second", QuotedText: "b", StartChar: 1, EndChar: 2})
+
+	comments, err := s.ListComments(ctx, doc.ID)
+	if err != nil {
+		t.Fatalf("ListComments: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("want 2 comments, got %d", len(comments))
+	}
+	if comments[0].Body != "first" || comments[1].Body != "second" {
+		t.Errorf("order wrong: %q, %q", comments[0].Body, comments[1].Body)
+	}
+}
+
+func TestBoltListCommentsEmpty(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
+
+	comments, err := s.ListComments(ctx, doc.ID)
+	if err != nil {
+		t.Fatalf("ListComments: %v", err)
+	}
+	if comments == nil {
+		t.Error("ListComments should return empty slice, not nil")
+	}
+	if len(comments) != 0 {
+		t.Errorf("want 0, got %d", len(comments))
+	}
+}
+
+func TestBoltGetComment(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
+	added, _ := s.AddComment(ctx, server.Comment{DocID: doc.ID, Body: "hi", QuotedText: "x", StartChar: 0, EndChar: 1})
+
+	got, err := s.GetComment(ctx, doc.ID, added.ID)
+	if err != nil {
+		t.Fatalf("GetComment: %v", err)
+	}
+	if got.ID != added.ID {
+		t.Errorf("ID mismatch: got %q, want %q", got.ID, added.ID)
+	}
+}
+
+func TestBoltGetCommentNotFound(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	_, err := s.GetComment(ctx, "no-doc", "no-comment")
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestBoltResolveComment(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
+	c, _ := s.AddComment(ctx, server.Comment{DocID: doc.ID, Body: "hi", QuotedText: "x", StartChar: 0, EndChar: 1})
+
+	// resolve
+	updated, err := s.ResolveComment(ctx, doc.ID, c.ID, true)
+	if err != nil {
+		t.Fatalf("ResolveComment: %v", err)
+	}
+	if !updated.Resolved {
+		t.Error("expected Resolved=true")
+	}
+
+	// unresolve
+	updated2, err := s.ResolveComment(ctx, doc.ID, c.ID, false)
+	if err != nil {
+		t.Fatalf("ResolveComment(false): %v", err)
+	}
+	if updated2.Resolved {
+		t.Error("expected Resolved=false after unresolve")
+	}
+
+	// persisted
+	got, _ := s.GetComment(ctx, doc.ID, c.ID)
+	if got.Resolved {
+		t.Error("persisted Resolved should be false")
+	}
+}
+
+func TestBoltResolveCommentNotFound(t *testing.T) {
+	s := newTestBolt(t)
+	_, err := s.ResolveComment(context.Background(), "no-doc", "no-comment", true)
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestBoltDeleteComment(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	doc, _ := s.Create(ctx, server.Document{Title: "doc"})
+	c, _ := s.AddComment(ctx, server.Comment{DocID: doc.ID, Body: "bye", QuotedText: "x", StartChar: 0, EndChar: 1})
+
+	if err := s.DeleteComment(ctx, doc.ID, c.ID); err != nil {
+		t.Fatalf("DeleteComment: %v", err)
+	}
+	_, err := s.GetComment(ctx, doc.ID, c.ID)
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound after delete, got %v", err)
+	}
+}
+
+func TestBoltDeleteCommentNotFound(t *testing.T) {
+	s := newTestBolt(t)
+	err := s.DeleteComment(context.Background(), "no-doc", "no-comment")
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestBoltCommentsIsolatedByDoc(t *testing.T) {
+	s := newTestBolt(t)
+	ctx := context.Background()
+	doc1, _ := s.Create(ctx, server.Document{Title: "doc1"})
+	doc2, _ := s.Create(ctx, server.Document{Title: "doc2"})
+
+	s.AddComment(ctx, server.Comment{DocID: doc1.ID, Body: "a", QuotedText: "x", StartChar: 0, EndChar: 1})
+	s.AddComment(ctx, server.Comment{DocID: doc1.ID, Body: "b", QuotedText: "y", StartChar: 1, EndChar: 2})
+	s.AddComment(ctx, server.Comment{DocID: doc2.ID, Body: "c", QuotedText: "z", StartChar: 0, EndChar: 1})
+
+	c1, _ := s.ListComments(ctx, doc1.ID)
+	c2, _ := s.ListComments(ctx, doc2.ID)
+	if len(c1) != 2 {
+		t.Errorf("doc1: want 2, got %d", len(c1))
+	}
+	if len(c2) != 1 {
+		t.Errorf("doc2: want 1, got %d", len(c2))
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

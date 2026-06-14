@@ -1068,3 +1068,211 @@ func TestHandlePublish_DecodeError(t *testing.T) {
 		t.Error("expected IsError=true for invalid JSON in 201 response")
 	}
 }
+
+// ── handleListReviews ─────────────────────────────────────
+
+func TestHandleListReviews_OpenOnly(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/documents/doc1/comments" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": "c1", "author": "Alice", "body": "Needs work", "quoted_text": "hello", "resolved": false, "created_at": "2024-01-01T00:00:00Z"},
+			{"id": "c2", "author": "Bob", "body": "Fixed!", "quoted_text": "world", "resolved": true, "created_at": "2024-01-02T00:00:00Z"},
+		})
+	}))
+
+	tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{"id": "doc1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Errorf("expected success: %s", resultText(t, tr))
+	}
+	text := resultText(t, tr)
+	if !strings.Contains(text, "Alice") {
+		t.Errorf("expected open comment author in result: %s", text)
+	}
+	if !strings.Contains(text, "Needs work") {
+		t.Errorf("expected open comment body in result: %s", text)
+	}
+	if strings.Contains(text, "Bob") {
+		t.Errorf("resolved comment should be excluded when include_resolved=false: %s", text)
+	}
+}
+
+func TestHandleListReviews_IncludeResolved(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": "c1", "author": "Alice", "body": "Needs work", "quoted_text": "hello", "resolved": false, "created_at": "2024-01-01T00:00:00Z"},
+			{"id": "c2", "author": "Bob", "body": "Fixed!", "quoted_text": "world", "resolved": true, "created_at": "2024-01-02T00:00:00Z"},
+		})
+	}))
+
+	tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{
+		"id": "doc1", "include_resolved": true,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Errorf("expected success: %s", resultText(t, tr))
+	}
+	text := resultText(t, tr)
+	if !strings.Contains(text, "Alice") || !strings.Contains(text, "Bob") {
+		t.Errorf("expected both open and resolved comments: %s", text)
+	}
+	if !strings.Contains(text, "resolved") {
+		t.Errorf("expected 'resolved' label in result: %s", text)
+	}
+}
+
+func TestHandleListReviews_EmptyList(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{})
+	}))
+
+	tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{"id": "doc1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Errorf("expected success for empty list: %s", resultText(t, tr))
+	}
+	if !strings.Contains(resultText(t, tr), "No open reviews") {
+		t.Errorf("expected empty message: %s", resultText(t, tr))
+	}
+}
+
+func TestHandleListReviews_EmptyListIncludeResolved(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{})
+	}))
+
+	tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{
+		"id": "doc1", "include_resolved": true,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Errorf("expected success: %s", resultText(t, tr))
+	}
+	if !strings.Contains(resultText(t, tr), "No reviews found") {
+		t.Errorf("expected 'No reviews found' message: %s", resultText(t, tr))
+	}
+}
+
+func TestHandleListReviews_MissingID(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("HTTP should not be called when id is missing")
+	}))
+
+	tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for missing id")
+	}
+}
+
+func TestHandleListReviews_NotFound(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{"id": "no-such"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for 404")
+	}
+	if !strings.Contains(resultText(t, tr), "no-such") {
+		t.Errorf("expected document ID in error: %s", resultText(t, tr))
+	}
+}
+
+func TestHandleListReviews_NotAvailable(t *testing.T) {
+	for _, code := range []int{http.StatusNotImplemented, http.StatusMethodNotAllowed} {
+		t.Run(fmt.Sprintf("%d", code), func(t *testing.T) {
+			s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(code)
+			}))
+			tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{"id": "doc1"}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tr.IsError {
+				t.Errorf("expected IsError=true for %d", code)
+			}
+			if !strings.Contains(resultText(t, tr), "not available") {
+				t.Errorf("expected 'not available' message: %s", resultText(t, tr))
+			}
+		})
+	}
+}
+
+func TestHandleListReviews_ServerError(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{"id": "doc1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for 500")
+	}
+	if !strings.Contains(resultText(t, tr), "500") {
+		t.Errorf("expected status code in error: %s", resultText(t, tr))
+	}
+}
+
+func TestHandleListReviews_DecodeError(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	}))
+
+	tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{"id": "doc1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected IsError=true for invalid JSON response")
+	}
+}
+
+func TestHandleListReviews_WithAPIKey(t *testing.T) {
+	var gotAuth string
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		json.NewEncoder(w).Encode([]map[string]any{})
+	}))
+	s.apiKey = "my-key"
+	s.handleListReviews(context.Background(), makeReq(map[string]any{"id": "doc1"}))
+	if gotAuth != "Bearer my-key" {
+		t.Errorf("Authorization = %q, want Bearer my-key", gotAuth)
+	}
+}
+
+func TestHandleListReviews_AnonymousAuthor(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": "c1", "author": "", "body": "anon comment", "quoted_text": "text", "resolved": false, "created_at": "2024-01-01T00:00:00Z"},
+		})
+	}))
+
+	tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{"id": "doc1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Errorf("expected success: %s", resultText(t, tr))
+	}
+	if !strings.Contains(resultText(t, tr), "anonymous") {
+		t.Errorf("expected 'anonymous' for empty author: %s", resultText(t, tr))
+	}
+}

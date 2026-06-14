@@ -22,12 +22,14 @@ var (
 	bucketByTime    = []byte("documents_by_time")
 	bucketRevisions = []byte("revisions")
 	bucketRevSeq    = []byte("revision_seq")
+	bucketComments  = []byte("comments")
 )
 
 const maxRevisions = 50
 
 var _ server.Store         = (*BoltStore)(nil) // compile-time interface check
 var _ server.RevisionStore = (*BoltStore)(nil)
+var _ server.CommentStore  = (*BoltStore)(nil)
 
 // BoltStore implements Store using bbolt for document metadata.
 type BoltStore struct {
@@ -47,7 +49,7 @@ func NewBolt(path string) (*BoltStore, error) {
 		return nil, fmt.Errorf("open bbolt: %w", err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketDocs, bucketByTime, bucketRevisions, bucketRevSeq} {
+		for _, b := range [][]byte{bucketDocs, bucketByTime, bucketRevisions, bucketRevSeq, bucketComments} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -403,5 +405,119 @@ func (s *BoltStore) DeleteRevisions(_ context.Context, docID string) error {
 			}
 		}
 		return tx.Bucket(bucketRevSeq).Delete([]byte(docID))
+	})
+}
+
+// commentKey builds the bucket key for a comment: "{docID}/{commentID}".
+func commentKey(docID, commentID string) []byte {
+	return []byte(docID + "/" + commentID)
+}
+
+// commentPrefix returns the key prefix for all comments on a document.
+func commentPrefix(docID string) []byte {
+	return []byte(docID + "/")
+}
+
+// AddComment creates a new comment, assigning a UUID and CreatedAt.
+func (s *BoltStore) AddComment(_ context.Context, c server.Comment) (*server.Comment, error) {
+	c.ID = uuid.New().String()
+	c.CreatedAt = time.Now().UTC()
+
+	data, err := json.Marshal(c)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketComments).Put(commentKey(c.DocID, c.ID), data)
+	}); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// ListComments returns all comments for docID ordered by CreatedAt ascending.
+func (s *BoltStore) ListComments(_ context.Context, docID string) ([]server.Comment, error) {
+	var comments []server.Comment
+	prefix := commentPrefix(docID)
+
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketComments)
+		c := b.Cursor()
+		for k, v := c.Seek(prefix); k != nil && strings.HasPrefix(string(k), string(prefix)); k, v = c.Next() {
+			var comment server.Comment
+			if err := json.Unmarshal(v, &comment); err != nil {
+				return err
+			}
+			comments = append(comments, comment)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Sort by CreatedAt ascending. UUIDs are assigned after CreatedAt, so bucket
+	// order (lexicographic by UUID) may differ from insertion order.
+	for i := 1; i < len(comments); i++ {
+		for j := i; j > 0 && comments[j].CreatedAt.Before(comments[j-1].CreatedAt); j-- {
+			comments[j], comments[j-1] = comments[j-1], comments[j]
+		}
+	}
+	if comments == nil {
+		comments = []server.Comment{}
+	}
+	return comments, nil
+}
+
+// GetComment returns the comment with the given ID, or ErrNotFound.
+func (s *BoltStore) GetComment(_ context.Context, docID, commentID string) (*server.Comment, error) {
+	var c server.Comment
+	err := s.db.View(func(tx *bolt.Tx) error {
+		data := tx.Bucket(bucketComments).Get(commentKey(docID, commentID))
+		if data == nil {
+			return server.ErrNotFound
+		}
+		return json.Unmarshal(data, &c)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// ResolveComment sets the Resolved field and returns the updated comment.
+func (s *BoltStore) ResolveComment(_ context.Context, docID, commentID string, resolved bool) (*server.Comment, error) {
+	var c server.Comment
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketComments)
+		key := commentKey(docID, commentID)
+		data := b.Get(key)
+		if data == nil {
+			return server.ErrNotFound
+		}
+		if err := json.Unmarshal(data, &c); err != nil {
+			return err
+		}
+		c.Resolved = resolved
+		updated, err := json.Marshal(c)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, updated)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// DeleteComment permanently removes a comment. Returns ErrNotFound if missing.
+func (s *BoltStore) DeleteComment(_ context.Context, docID, commentID string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketComments)
+		key := commentKey(docID, commentID)
+		if b.Get(key) == nil {
+			return server.ErrNotFound
+		}
+		return b.Delete(key)
 	})
 }

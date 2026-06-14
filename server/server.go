@@ -33,6 +33,7 @@ type srv struct {
 	logger            *log.Logger
 	chromaCSS         template.CSS
 	cssVersion        string
+	jsVersion         string
 	authProvider      AuthProvider
 	defaultVisibility Visibility
 	eventListener     EventListener
@@ -62,6 +63,12 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		cssVersion = fmt.Sprintf("%x", sum[:4])
 	}
 
+	jsVersion := "1"
+	if jsBytes, err := web.FS.ReadFile("static/comments.js"); err == nil {
+		sum := sha256.Sum256(jsBytes)
+		jsVersion = fmt.Sprintf("%x", sum[:4])
+	}
+
 	s := &srv{
 		mux:               http.NewServeMux(),
 		store:             store,
@@ -70,6 +77,7 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 		logger:            logger,
 		chromaCSS:         renderer.ThemeCSS(),
 		cssVersion:        cssVersion,
+		jsVersion:         jsVersion,
 		authProvider:      opts.AuthProvider,
 		defaultVisibility: opts.DefaultVisibility,
 		eventListener:     opts.EventListener,
@@ -93,6 +101,7 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 func (s *srv) loadTemplates() {
 	funcs := template.FuncMap{
 		"cssVersion": func() string { return s.cssVersion },
+			"jsVersion":  func() string { return s.jsVersion },
 		"jsonStr": func(s string) (template.JS, error) {
 			b, err := json.Marshal(s)
 			return template.JS(b), err
@@ -138,6 +147,13 @@ func (s *srv) registerRoutes(homeHandler http.Handler) {
 		s.mux.HandleFunc("GET /api/documents/{id}/revisions", s.handleListRevisionsAPI)
 		s.mux.HandleFunc("GET /api/documents/{id}/revisions/{num}", s.handleGetRevisionAPI)
 		s.mux.HandleFunc("GET /api/documents/{id}/diff", s.handleDiffAPI)
+	}
+
+	if s.hasComments() {
+		s.mux.HandleFunc("POST /api/documents/{id}/comments", s.handleCreateComment)
+		s.mux.HandleFunc("GET /api/documents/{id}/comments", s.handleListComments)
+		s.mux.HandleFunc("PATCH /api/documents/{id}/comments/{cid}", s.handleResolveComment)
+		s.mux.HandleFunc("DELETE /api/documents/{id}/comments/{cid}", s.handleDeleteComment)
 	}
 
 	if s.mcpHandler != nil {
@@ -254,6 +270,7 @@ type documentData struct {
 	ShowVisibilityToggle bool
 	ShowRevisions        bool
 	HasMermaid           bool
+	HasComments          bool
 }
 
 func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +317,7 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 		ShowVisibilityToggle: s.canModify(ownerID, doc),
 		ShowRevisions:        s.canModify(ownerID, doc) && s.hasRevisions(),
 		HasMermaid:           result.HasMermaid,
+		HasComments:          s.hasComments(),
 	})
 }
 
