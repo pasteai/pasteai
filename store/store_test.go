@@ -898,6 +898,166 @@ func TestBoltCommentsIsolatedByDoc(t *testing.T) {
 	}
 }
 
+// ── DiskContent comment tests ───────────────────────────────
+
+func TestDiskAddComment(t *testing.T) {
+	d := newTestDisk(t)
+	ctx := context.Background()
+
+	c, err := d.AddComment(ctx, server.Comment{
+		DocID:      "doc-1",
+		Author:     "Alice",
+		Body:       "Needs work",
+		StartChar:  0,
+		EndChar:    5,
+		QuotedText: "hello",
+	})
+	if err != nil {
+		t.Fatalf("AddComment: %v", err)
+	}
+	if c.ID == "" {
+		t.Error("expected non-empty ID")
+	}
+	if c.CreatedAt.IsZero() {
+		t.Error("expected non-zero CreatedAt")
+	}
+	if c.Body != "Needs work" {
+		t.Errorf("body = %q, want Needs work", c.Body)
+	}
+}
+
+func TestDiskListComments(t *testing.T) {
+	d := newTestDisk(t)
+	ctx := context.Background()
+
+	d.AddComment(ctx, server.Comment{DocID: "doc-1", Body: "first", QuotedText: "a", StartChar: 0, EndChar: 1})
+	time.Sleep(time.Millisecond)
+	d.AddComment(ctx, server.Comment{DocID: "doc-1", Body: "second", QuotedText: "b", StartChar: 1, EndChar: 2})
+
+	comments, err := d.ListComments(ctx, "doc-1")
+	if err != nil {
+		t.Fatalf("ListComments: %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("want 2, got %d", len(comments))
+	}
+	if comments[0].Body != "first" || comments[1].Body != "second" {
+		t.Errorf("order wrong: %q, %q", comments[0].Body, comments[1].Body)
+	}
+}
+
+func TestDiskListCommentsEmpty(t *testing.T) {
+	d := newTestDisk(t)
+	comments, err := d.ListComments(context.Background(), "doc-none")
+	if err != nil {
+		t.Fatalf("ListComments: %v", err)
+	}
+	if comments == nil {
+		t.Error("ListComments should return empty slice, not nil")
+	}
+	if len(comments) != 0 {
+		t.Errorf("want 0, got %d", len(comments))
+	}
+}
+
+func TestDiskGetComment(t *testing.T) {
+	d := newTestDisk(t)
+	ctx := context.Background()
+
+	added, _ := d.AddComment(ctx, server.Comment{DocID: "doc-1", Body: "hi", QuotedText: "x", StartChar: 0, EndChar: 1})
+	got, err := d.GetComment(ctx, "doc-1", added.ID)
+	if err != nil {
+		t.Fatalf("GetComment: %v", err)
+	}
+	if got.ID != added.ID {
+		t.Errorf("ID mismatch: got %q, want %q", got.ID, added.ID)
+	}
+}
+
+func TestDiskGetCommentNotFound(t *testing.T) {
+	d := newTestDisk(t)
+	_, err := d.GetComment(context.Background(), "no-doc", "no-comment")
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestDiskResolveComment(t *testing.T) {
+	d := newTestDisk(t)
+	ctx := context.Background()
+
+	c, _ := d.AddComment(ctx, server.Comment{DocID: "doc-1", Body: "hi", QuotedText: "x", StartChar: 0, EndChar: 1})
+
+	updated, err := d.ResolveComment(ctx, "doc-1", c.ID, true)
+	if err != nil {
+		t.Fatalf("ResolveComment: %v", err)
+	}
+	if !updated.Resolved {
+		t.Error("expected Resolved=true")
+	}
+
+	updated2, err := d.ResolveComment(ctx, "doc-1", c.ID, false)
+	if err != nil {
+		t.Fatalf("ResolveComment(false): %v", err)
+	}
+	if updated2.Resolved {
+		t.Error("expected Resolved=false after unresolve")
+	}
+
+	got, _ := d.GetComment(ctx, "doc-1", c.ID)
+	if got.Resolved {
+		t.Error("persisted Resolved should be false")
+	}
+}
+
+func TestDiskResolveCommentNotFound(t *testing.T) {
+	d := newTestDisk(t)
+	_, err := d.ResolveComment(context.Background(), "no-doc", "no-comment", true)
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestDiskDeleteComment(t *testing.T) {
+	d := newTestDisk(t)
+	ctx := context.Background()
+
+	c, _ := d.AddComment(ctx, server.Comment{DocID: "doc-1", Body: "bye", QuotedText: "x", StartChar: 0, EndChar: 1})
+	if err := d.DeleteComment(ctx, "doc-1", c.ID); err != nil {
+		t.Fatalf("DeleteComment: %v", err)
+	}
+	_, err := d.GetComment(ctx, "doc-1", c.ID)
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound after delete, got %v", err)
+	}
+}
+
+func TestDiskDeleteCommentNotFound(t *testing.T) {
+	d := newTestDisk(t)
+	err := d.DeleteComment(context.Background(), "no-doc", "no-comment")
+	if !errors.Is(err, server.ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestDiskCommentsIsolatedByDoc(t *testing.T) {
+	d := newTestDisk(t)
+	ctx := context.Background()
+
+	d.AddComment(ctx, server.Comment{DocID: "doc-1", Body: "a", QuotedText: "x", StartChar: 0, EndChar: 1})
+	d.AddComment(ctx, server.Comment{DocID: "doc-1", Body: "b", QuotedText: "y", StartChar: 1, EndChar: 2})
+	d.AddComment(ctx, server.Comment{DocID: "doc-2", Body: "c", QuotedText: "z", StartChar: 0, EndChar: 1})
+
+	c1, _ := d.ListComments(ctx, "doc-1")
+	c2, _ := d.ListComments(ctx, "doc-2")
+	if len(c1) != 2 {
+		t.Errorf("doc-1: want 2, got %d", len(c1))
+	}
+	if len(c2) != 1 {
+		t.Errorf("doc-2: want 1, got %d", len(c2))
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
