@@ -10,9 +10,11 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -61,7 +63,25 @@ func (m *memStore) List(_ context.Context, opts server.ListOptions) (*server.Lis
 		}
 	}
 	sort.Slice(docs, func(i, j int) bool { return docs[i].CreatedAt.After(docs[j].CreatedAt) })
-	return &server.ListResult{Documents: docs}, nil
+
+	// Honour Limit/NextToken so pagination bugs are visible to tests. Real
+	// backends use opaque cursors; an offset is enough for a fake.
+	start := 0
+	if opts.NextToken != "" {
+		n, err := strconv.Atoi(opts.NextToken)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("memStore: bad next token %q", opts.NextToken)
+		}
+		start = min(n, len(docs))
+	}
+	docs = docs[start:]
+
+	var next string
+	if opts.Limit > 0 && len(docs) > opts.Limit {
+		docs = docs[:opts.Limit]
+		next = strconv.Itoa(start + opts.Limit)
+	}
+	return &server.ListResult{Documents: docs, NextToken: next}, nil
 }
 
 func (m *memStore) Get(_ context.Context, id string) (*server.Document, error) {
@@ -2102,9 +2122,9 @@ func TestUpdateDocumentNoRevisionStoreOK(t *testing.T) {
 
 type revisionMemContent struct {
 	*memContent
-	mu       sync.Mutex
-	revs     map[string][]byte // key: "docID/num"
-	deleted  []string
+	mu      sync.Mutex
+	revs    map[string][]byte // key: "docID/num"
+	deleted []string
 }
 
 func newRevisionMemContent() *revisionMemContent {
@@ -2287,9 +2307,9 @@ func TestListRevisionsAPI(t *testing.T) {
 	}
 	var result struct {
 		Revisions []struct {
-			Num          int    `json:"num"`
-			AddedLines   int    `json:"added_lines"`
-			RemovedLines int    `json:"removed_lines"`
+			Num          int `json:"num"`
+			AddedLines   int `json:"added_lines"`
+			RemovedLines int `json:"removed_lines"`
 		} `json:"revisions"`
 	}
 	decodeJSON(t, resp.Body, &result)
@@ -2406,8 +2426,8 @@ func TestDiffAPIWithToParam(t *testing.T) {
 		t.Fatalf("status = %d, want 200 for from=1&to=2", resp.StatusCode)
 	}
 	var result struct {
-		From int `json:"from"`
-		To   any `json:"to"`
+		From int    `json:"from"`
+		To   any    `json:"to"`
 		Diff string `json:"diff"`
 	}
 	decodeJSON(t, resp.Body, &result)
@@ -2723,5 +2743,78 @@ func TestVisibilitySelect_NotRenderedForAnonymousOnAuthServer(t *testing.T) {
 	body := readBody(t, resp)
 	if strings.Contains(body, "visibility-select") {
 		t.Error("visibility-select should not be rendered for anonymous user on auth server")
+	}
+}
+
+// ── List pagination ────────────────────────────────────────
+
+// decodeList is a small helper for the pagination tests below.
+func decodeList(t *testing.T, url string) (titles []string, nextToken string) {
+	t.Helper()
+	resp := mustGet(t, url)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var listResp struct {
+		Documents []struct {
+			Title string `json:"title"`
+		} `json:"documents"`
+		NextToken string `json:"next_token"`
+	}
+	decodeJSON(t, resp.Body, &listResp)
+	for _, d := range listResp.Documents {
+		titles = append(titles, d.Title)
+	}
+	return titles, listResp.NextToken
+}
+
+// The API hardcoded a page size of 50, so a caller asking for fewer got the
+// whole list back.
+func TestListDocuments_HonoursLimit(t *testing.T) {
+	ts, db := newTestServer(t)
+	ctx := context.Background()
+	for i := 0; i < 8; i++ {
+		db.Create(ctx, server.Document{Title: fmt.Sprintf("Doc %d", i), Content: "c", Visibility: server.VisibilityPublic})
+	}
+
+	titles, next := decodeList(t, ts.URL+"/api/documents?limit=3")
+	if len(titles) != 3 {
+		t.Errorf("got %d documents, want 3 (limit ignored?)", len(titles))
+	}
+	if next == "" {
+		t.Error("expected a next_token when more documents remain")
+	}
+}
+
+// The home page's "Load more" button sends ?token=; the API only read
+// ?next_token=. The mismatch meant the token was dropped and page one was
+// returned again, so the list appeared duplicated.
+func TestListDocuments_AcceptsEitherTokenParam(t *testing.T) {
+	ts, db := newTestServer(t)
+	ctx := context.Background()
+	for i := 0; i < 6; i++ {
+		db.Create(ctx, server.Document{Title: fmt.Sprintf("Doc %d", i), Content: "c", Visibility: server.VisibilityPublic})
+	}
+
+	page1, next := decodeList(t, ts.URL+"/api/documents?limit=3")
+	if next == "" {
+		t.Fatal("expected a next_token for page 1")
+	}
+
+	for _, param := range []string{"next_token", "token"} {
+		t.Run(param, func(t *testing.T) {
+			page2, _ := decodeList(t, ts.URL+"/api/documents?limit=3&"+param+"="+url.QueryEscape(next))
+			if len(page2) == 0 {
+				t.Fatal("page 2 is empty")
+			}
+			for _, a := range page1 {
+				for _, b := range page2 {
+					if a == b {
+						t.Fatalf("page 2 repeats %q from page 1 — token was ignored", a)
+					}
+				}
+			}
+		})
 	}
 }

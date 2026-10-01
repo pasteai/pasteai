@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -577,8 +578,8 @@ func (s *srv) handleSearch(w http.ResponseWriter, r *http.Request) {
 func (s *srv) handleListDocuments(w http.ResponseWriter, r *http.Request) {
 	result, err := s.store.List(r.Context(), ListOptions{
 		OwnerID:   ownerFromCtx(r.Context()),
-		Limit:     50,
-		NextToken: r.URL.Query().Get("next_token"),
+		Limit:     listLimit(r),
+		NextToken: paginationToken(r),
 	})
 	if err != nil {
 		s.serverError(w, err)
@@ -590,6 +591,31 @@ func (s *srv) handleListDocuments(w http.ResponseWriter, r *http.Request) {
 		docs[i] = s.toResponse(r, d)
 	}
 	writeJSON(w, http.StatusOK, listResponse{Documents: docs, NextToken: result.NextToken})
+}
+
+// listLimit reads the requested page size, clamped so a caller cannot ask for
+// an unbounded page. Falls back to the default for missing or invalid values.
+func listLimit(r *http.Request) int {
+	const defaultLimit, maxLimit = 50, 100
+	n, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil || n <= 0 {
+		return defaultLimit
+	}
+	if n > maxLimit {
+		return maxLimit
+	}
+	return n
+}
+
+// paginationToken reads the continuation token, accepting either spelling.
+// The HTML home page paginates with "token" and the JSON API with
+// "next_token"; honouring both stops the two conventions drifting into a
+// silent refetch of page one.
+func paginationToken(r *http.Request) string {
+	if t := r.URL.Query().Get("next_token"); t != "" {
+		return t
+	}
+	return r.URL.Query().Get("token")
 }
 
 func (s *srv) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {

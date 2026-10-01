@@ -275,6 +275,8 @@ function _pasteaiRenderRow(d) {
     btn.disabled = true;
     btn.textContent = 'Loading…';
 
+    // 'token' is the documented pagination param; the API also accepts
+    // 'next_token', which is the field name it returns.
     var url = '/api/documents?limit=20&token=' + encodeURIComponent(token);
     var headers = {};
     if (window._pasteaiApiKey) headers['Authorization'] = 'Bearer ' + window._pasteaiApiKey;
