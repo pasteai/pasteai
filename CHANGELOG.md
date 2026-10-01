@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.20](https://github.com/pasteai/pasteai/compare/v0.0.19...v0.0.20) (2026-10-01)
+
+
+### Features
+
+* add comment detail popout, editing, replies and author permissions ([641a309](https://github.com/pasteai/pasteai/commit/641a30903ee4de87c8a2d400f6fd015f6478802d))
+* add CommentStore methods to DiskContent for file-based comment storage ([3294c96](https://github.com/pasteai/pasteai/commit/3294c96e07bdfb7c67220b34342f1666d03e6a85))
+
+
+### Bug Fixes
+
+* delete a document's comments along with the document ([eb65d62](https://github.com/pasteai/pasteai/commit/eb65d62d5db201e95ebf18f7b6aef5777c91ec02))
+* honour limit and accept either pagination token on the list API ([1f18946](https://github.com/pasteai/pasteai/commit/1f18946816d021c35b07cf9de5f1b58321e9ac9d))
+* stop MCP update_document clearing the title when only content is given ([4be419e](https://github.com/pasteai/pasteai/commit/4be419e755acfd30ef41b071289fbc9f71f3f48f))
+
 ## [0.0.19](https://github.com/pasteai/pasteai/compare/v0.0.18...v0.0.19) (2026-06-14)
 
 
