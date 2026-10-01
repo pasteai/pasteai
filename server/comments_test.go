@@ -88,6 +88,18 @@ func (m *memCommentStore) ResolveComment(_ context.Context, docID, commentID str
 	return &cp, nil
 }
 
+func (m *memCommentStore) UpdateCommentBody(_ context.Context, docID, commentID, body string) (*server.Comment, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.comments[m.key(docID, commentID)]
+	if !ok {
+		return nil, server.ErrNotFound
+	}
+	c.Body = body
+	cp := *c
+	return &cp, nil
+}
+
 func (m *memCommentStore) DeleteComment(_ context.Context, docID, commentID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

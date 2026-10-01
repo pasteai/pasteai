@@ -18,6 +18,7 @@ type Comment struct {
 	StartChar  int       `json:"start_char"`
 	EndChar    int       `json:"end_char"`
 	QuotedText string    `json:"quoted_text"`
+	ParentID   string    `json:"parent_id,omitempty"`
 	Resolved   bool      `json:"resolved"`
 	CreatedAt  time.Time `json:"created_at"`
 }

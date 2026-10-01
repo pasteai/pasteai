@@ -22,15 +22,33 @@
 .comment-stale-label{font-size:11px;color:#9a6700;background:#fff8c5;border:1px solid #d4a72c;border-radius:3px;padding:1px 5px;font-style:normal}
 .comment-entry-quote{margin:4px 0;padding:4px 8px;border-left:3px solid var(--color-border,#d0d7de);font-size:12px;color:var(--color-text-muted,#57606a);white-space:pre-wrap;word-break:break-word;overflow-wrap:break-word}
 .comment-entry-body{margin:6px 0 8px;word-break:break-word;overflow-wrap:break-word}
-.comment-entry-actions{display:flex;gap:6px}
+.comment-entry-actions{display:flex;gap:6px;flex-wrap:wrap}
 .comment-btn{padding:3px 8px;border:1px solid var(--color-border,#d0d7de);border-radius:4px;background:none;cursor:pointer;font-size:12px}
 .comment-btn--danger{color:#cf222e;border-color:#cf222e}
+/* Sidebar entries are clickable and open the detail popout */
+.comment-entry{cursor:pointer}
+.comment-entry--selected{border-color:var(--color-accent,#0969da);box-shadow:0 0 0 2px rgba(9,105,218,.25)}
+.comment-entry:focus-visible{outline:2px solid var(--color-accent,#0969da);outline-offset:2px}
+.comment-reply-count{font-size:11px;color:var(--color-text-muted,#57606a)}
+/* ── Comment detail popout ───────────────────── */
+.comment-detail-popover{max-height:min(70vh,560px);overflow-y:auto}
+.comment-detail-header{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:13px}
+.comment-detail-header .comment-sidebar-close{margin-left:auto}
+.comment-detail-body{margin:8px 0;font-size:13px;word-break:break-word;overflow-wrap:break-word;white-space:pre-wrap}
+.comment-resolved-label{font-size:11px;color:#1a7f37;background:#dafbe1;border:1px solid #4ac26b;border-radius:3px;padding:1px 5px}
+.comment-replies{margin-top:12px;border-top:1px solid var(--color-border,#d0d7de);padding-top:10px}
+.comment-replies-title{margin:0 0 6px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-text-muted,#57606a)}
+.comment-reply{border-left:2px solid var(--color-border,#d0d7de);padding:4px 0 4px 8px;margin-bottom:8px;font-size:13px}
+.comment-reply .comment-entry-body{margin:2px 0 6px;white-space:pre-wrap}
+.comment-reply-form{margin-top:10px;border-top:1px solid var(--color-border,#d0d7de);padding-top:10px}
 /* P1 discoverability: hint toast */
 .comment-hint{position:fixed;bottom:68px;right:24px;z-index:101;padding:8px 14px;border-radius:8px;background:var(--color-surface-card,#fff);border:1px solid var(--color-border,#d0d7de);font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.12);max-width:220px}
 /* ── Anchors ─────────────────────────────────── */
 mark.comment-anchor{background:rgba(255,220,0,.4);border-radius:2px;cursor:pointer;transition:background .15s,box-shadow .15s}
 mark.comment-anchor--active,mark.comment-anchor:hover{background:rgba(255,180,0,.7);box-shadow:0 0 0 2px rgba(255,180,0,.4)}
 mark.comment-anchor--resolved{background:rgba(0,180,80,.15)}
+/* Selected anchor stays indicated while its detail popout is open */
+mark.comment-anchor--selected{background:rgba(255,180,0,.85);box-shadow:0 0 0 2px var(--color-accent,#0969da)}
 /* ── Selection float button ──────────────────── */
 .add-comment-float-btn{position:fixed;z-index:110;padding:6px 14px;border-radius:16px;border:none;background:var(--color-accent,#0969da);color:#fff;font-size:13px;font-weight:500;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);-webkit-touch-callout:none;user-select:none}
 /* ── Add-comment popover (desktop) ──────────── */
@@ -190,7 +208,7 @@ mark.comment-anchor--resolved{background:rgba(0,180,80,.15)}
 
 {{if .HasComments}}
 <!-- P1 discoverability: always visible, label changes when 0 comments -->
-<button id="comment-toggle-btn" class="comment-toggle-btn" onclick="toggleCommentSidebar()" aria-label="Open reviews">
+<button id="comment-toggle-btn" class="comment-toggle-btn" hidden onclick="toggleCommentSidebar()" aria-label="Open reviews">
   Reviews <span id="comment-count">…</span>
 </button>
 
@@ -215,6 +233,13 @@ mark.comment-anchor--resolved{background:rgba(0,180,80,.15)}
   + Comment
 </button>
 
+<!-- Detail popout: opened by clicking a comment in the sidebar -->
+<div id="comment-detail-scrim" class="add-comment-scrim" hidden onclick="closeCommentDetail()"></div>
+<div id="comment-detail-popover" class="add-comment-popover comment-detail-popover" hidden
+     role="dialog" aria-modal="true" aria-label="Comment">
+  <div id="comment-detail-content"></div>
+</div>
+
 <div id="add-comment-scrim" class="add-comment-scrim" hidden onclick="cancelAddComment()"></div>
 <div id="add-comment-popover" class="add-comment-popover" hidden role="dialog" aria-modal="true" aria-label="Add comment">
   <p id="comment-quote-preview" class="add-comment-quote-preview"></p>
@@ -235,6 +260,7 @@ mark.comment-anchor--resolved{background:rgba(0,180,80,.15)}
 <script src="/static/comments.js?v={{jsVersion}}"></script>
 <script>
 {{if .ShowDelete}}window._pasteaiCanManageComments = true;{{end}}
+{{if .CanComment}}window._pasteaiCanComment = true;{{end}}
 initComments('{{.Document.ID}}');
 </script>
 {{end}}

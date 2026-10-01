@@ -101,7 +101,7 @@ func NewServer(store Store, content ContentBackend, opts Options) http.Handler {
 func (s *srv) loadTemplates() {
 	funcs := template.FuncMap{
 		"cssVersion": func() string { return s.cssVersion },
-			"jsVersion":  func() string { return s.jsVersion },
+		"jsVersion":  func() string { return s.jsVersion },
 		"jsonStr": func(s string) (template.JS, error) {
 			b, err := json.Marshal(s)
 			return template.JS(b), err
@@ -152,7 +152,7 @@ func (s *srv) registerRoutes(homeHandler http.Handler) {
 	if s.hasComments() {
 		s.mux.HandleFunc("POST /api/documents/{id}/comments", s.handleCreateComment)
 		s.mux.HandleFunc("GET /api/documents/{id}/comments", s.handleListComments)
-		s.mux.HandleFunc("PATCH /api/documents/{id}/comments/{cid}", s.handleResolveComment)
+		s.mux.HandleFunc("PATCH /api/documents/{id}/comments/{cid}", s.handlePatchComment)
 		s.mux.HandleFunc("DELETE /api/documents/{id}/comments/{cid}", s.handleDeleteComment)
 	}
 
@@ -271,6 +271,7 @@ type documentData struct {
 	ShowRevisions        bool
 	HasMermaid           bool
 	HasComments          bool
+	CanComment           bool
 }
 
 func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
@@ -318,6 +319,7 @@ func (s *srv) handleViewDocument(w http.ResponseWriter, r *http.Request) {
 		ShowRevisions:        s.canModify(ownerID, doc) && s.hasRevisions(),
 		HasMermaid:           result.HasMermaid,
 		HasComments:          s.hasComments(),
+		CanComment:           s.authProvider == nil || ownerFromCtx(r.Context()) != "",
 	})
 }
 
@@ -458,7 +460,7 @@ type documentDetailResponse struct {
 }
 
 const (
-	maxBodyBytes    = 1 << 20  // 1 MB total
+	maxBodyBytes    = 1 << 20 // 1 MB total
 	maxTitleBytes   = 500
 	maxAuthorBytes  = 200
 	maxContentBytes = 512 * 1024 // 512 KB

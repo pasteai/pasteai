@@ -510,6 +510,33 @@ func (s *BoltStore) ResolveComment(_ context.Context, docID, commentID string, r
 	return &c, nil
 }
 
+// UpdateCommentBody replaces the body text of a comment and returns the updated comment.
+// Returns ErrNotFound if no comment matches docID+commentID.
+func (s *BoltStore) UpdateCommentBody(_ context.Context, docID, commentID, body string) (*server.Comment, error) {
+	var c server.Comment
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketComments)
+		key := commentKey(docID, commentID)
+		data := b.Get(key)
+		if data == nil {
+			return server.ErrNotFound
+		}
+		if err := json.Unmarshal(data, &c); err != nil {
+			return err
+		}
+		c.Body = body
+		updated, err := json.Marshal(c)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, updated)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 // DeleteComment permanently removes a comment. Returns ErrNotFound if missing.
 func (s *BoltStore) DeleteComment(_ context.Context, docID, commentID string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {

@@ -7,10 +7,45 @@
   var _pendingRect = null;
   var _isTouchDevice = window.matchMedia('(hover: none)').matches;
   var _vpListener = null;
+  var _detailVpListener = null;
   var _scrollToId = null;
   var _selectionTimer = null;
+  var _activeId = null; // comment currently shown in the detail popout
+  var _editing = false; // detail popout is in edit mode
   var AUTHOR_KEY = 'pasteai_comment_author';
   var MAX_QUOTE = 500; // chars; prevent wrapping entire document
+
+  // ── Permissions ───────────────────────────────────────────────────────────
+  // Both flags are injected by the template. In OSS/self-hosted mode there is
+  // no auth, so CanComment is always true and every comment reports is_mine.
+
+  function canComment() { return !!window._pasteaiCanComment; }
+  function canManage() { return !!window._pasteaiCanManageComments; }
+
+  // canEdit: only the comment's author may change its text. Gated on
+  // canComment so a read-only viewer never sees mutation controls, whatever
+  // the server reports for is_mine.
+  function canEdit(c) { return canComment() && !!c.is_mine; }
+
+  // canModerate: the author or the document owner may resolve/delete.
+  function canModerate(c) { return canComment() && (!!c.is_mine || canManage()); }
+
+  // ── Comment tree helpers ──────────────────────────────────────────────────
+
+  function byId(cid) {
+    for (var i = 0; i < _comments.length; i++) {
+      if (_comments[i].id === cid) return _comments[i];
+    }
+    return null;
+  }
+
+  function rootComments() {
+    return _comments.filter(function (c) { return !c.parent_id; });
+  }
+
+  function repliesOf(cid) {
+    return _comments.filter(function (c) { return c.parent_id === cid; });
+  }
 
   // ── Public API ────────────────────────────────────────────────────────────
 
@@ -41,13 +76,21 @@
       if (!onFloatBtn && !onPopover && !onReadyToggle) hideFloatBtn();
     }, true);
 
-    // Keyboard: Escape closes form; Tab trapped inside form.
+    // Keyboard: Escape closes the detail popout, then the add form;
+    // Tab is trapped inside whichever dialog is open.
     document.addEventListener('keydown', function (e) {
+      var detail = document.getElementById('comment-detail-popover');
       var popover = document.getElementById('add-comment-popover');
-      if (!popover || popover.hidden) return;
-      if (e.key === 'Escape') { cancelAddComment(); return; }
+      var dialog = (detail && !detail.hidden) ? detail
+                 : (popover && !popover.hidden) ? popover
+                 : null;
+      if (!dialog) return;
+      if (e.key === 'Escape') {
+        if (dialog === detail) closeCommentDetail(); else cancelAddComment();
+        return;
+      }
       if (e.key !== 'Tab') return;
-      var focusable = popover.querySelectorAll('textarea, input, button:not([disabled])');
+      var focusable = dialog.querySelectorAll('textarea, input, button:not([disabled])');
       if (!focusable.length) return;
       var first = focusable[0];
       var last = focusable[focusable.length - 1];
@@ -64,6 +107,9 @@
     document.addEventListener('click', function (e) {
       var sidebar = document.getElementById('comment-sidebar');
       var toggle = document.getElementById('comment-toggle-btn');
+      var detail = document.getElementById('comment-detail-popover');
+      // Clicks inside the detail popout must not close the sidebar behind it.
+      if (detail && !detail.hidden && (detail === e.target || detail.contains(e.target))) return;
       if (sidebar && !sidebar.hidden &&
           !sidebar.contains(e.target) &&
           toggle && !toggle.contains(e.target)) {
@@ -112,53 +158,11 @@
       authorInput.value = localStorage.getItem(AUTHOR_KEY) || '';
     }
 
-    var isMobile = window.innerWidth < 640;
-
-    if (isMobile) {
-      // ── Mobile: bottom sheet ───────────────────────────────────────────
-      // No body scroll lock — setting position:fixed on <body> creates a new
-      // containing block on iOS Safari and makes position:fixed children invisible.
-      // The scrim has touch-action:none to block scroll-through instead.
+    if (isMobile()) {
       if (scrim) scrim.hidden = false;
-      popover.style.bottom = '0';
-      popover.hidden = false;
-
-      // Keep the sheet above the software keyboard via visualViewport.
-      if (window.visualViewport) {
-        _vpListener = function () {
-          var vv = window.visualViewport;
-          var kbHeight = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
-          popover.style.bottom = kbHeight + 'px';
-          popover.style.maxHeight = (vv.height * 0.8) + 'px';
-        };
-        window.visualViewport.addEventListener('resize', _vpListener);
-        window.visualViewport.addEventListener('scroll', _vpListener);
-        _vpListener();
-      }
+      openAsSheet(popover);
     } else {
-      // ── Desktop: position near the selection ───────────────────────────
-      popover.style.bottom = '';
-      popover.style.maxHeight = '';
-      popover.style.left = '-9999px';
-      popover.style.top = '-9999px';
-      popover.hidden = false;
-
-      var vw = window.innerWidth;
-      var vh = window.innerHeight;
-      var pw = popover.offsetWidth || 300;
-      var ph = popover.offsetHeight || 220;
-      var rect = _pendingRect;
-
-      if (rect) {
-        var left = Math.max(8, Math.min(rect.left + rect.width / 2 - pw / 2, vw - pw - 8));
-        var top = rect.bottom + 8;
-        if (top + ph > vh - 8) top = Math.max(8, rect.top - ph - 8);
-        popover.style.left = left + 'px';
-        popover.style.top = top + 'px';
-      } else {
-        popover.style.left = Math.max(8, (vw - pw) / 2) + 'px';
-        popover.style.top = '120px';
-      }
+      openAsPopover(popover, _pendingRect);
     }
 
     var ta = document.getElementById('comment-body-input');
@@ -181,11 +185,7 @@
     var scrim = document.getElementById('add-comment-scrim');
     if (scrim) scrim.hidden = true;
 
-    if (_vpListener && window.visualViewport) {
-      window.visualViewport.removeEventListener('resize', _vpListener);
-      window.visualViewport.removeEventListener('scroll', _vpListener);
-      _vpListener = null;
-    }
+    _vpListener = detachViewport(_vpListener);
 
     resetSubmitBtn();
     if (window.getSelection) window.getSelection().removeAllRanges();
@@ -208,59 +208,268 @@
 
     setSubmitLoading(true);
 
+    postComment({
+      author: author,
+      body: body,
+      quoted_text: _pendingText,
+      start_char: _pendingStartChar,
+      end_char: _pendingEndChar
+    }, function (comment) {
+      _scrollToId = comment.id;
+      if (ta) ta.value = '';
+      cancelAddComment();
+      loadComments();
+    }, function () {
+      setSubmitLoading(false);
+    });
+  }
+
+  // postComment POSTs a new comment (top-level or reply) and reports the result.
+  function postComment(payload, onSuccess, onError) {
     fetch('/api/documents/' + _docId + '/comments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        author: author,
-        body: body,
-        quoted_text: _pendingText,
-        start_char: _pendingStartChar,
-        end_char: _pendingEndChar
-      })
+      body: JSON.stringify(payload)
     }).then(function (r) {
-      if (r.ok) {
-        return r.json().then(function (comment) {
-          _scrollToId = comment.id;
-          if (ta) ta.value = '';
-          cancelAddComment();
-          loadComments();
-        });
-      }
-      if (r.status === 401) {
-        alert('Please sign in to add a comment.');
-        cancelAddComment();
+      if (r.ok) return r.json().then(onSuccess);
+      if (r.status === 401 || r.status === 403) {
+        alert('Please sign in to comment.');
+        onError();
         return;
       }
-      setSubmitLoading(false);
       alert('Failed to submit comment — try again.');
+      onError();
     }).catch(function () {
-      setSubmitLoading(false);
       alert('Network error — try again.');
+      onError();
     });
   }
 
   function resolveComment(cid, resolved) {
+    patchComment(cid, { resolved: resolved });
+  }
+
+  // patchComment sends a PATCH and reloads on success.
+  function patchComment(cid, payload) {
     fetch('/api/documents/' + _docId + '/comments/' + cid, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resolved: resolved })
+      body: JSON.stringify(payload)
     }).then(function (r) {
-      if (r.ok) { loadComments(); }
+      if (r.ok) { _editing = false; loadComments(); }
       else if (r.status === 403) { alert('Not authorised to modify this comment.'); }
       else { alert('Failed to update comment — try again.'); }
     }).catch(function () { alert('Network error — try again.'); });
   }
 
   function deleteComment(cid) {
-    if (!confirm('Delete this comment?')) return;
-    fetch('/api/documents/' + _docId + '/comments/' + cid, {
-      method: 'DELETE'
+    var replyCount = repliesOf(cid).length;
+    var msg = replyCount
+      ? 'Delete this comment and its ' + replyCount + ' repl' + (replyCount === 1 ? 'y' : 'ies') + '?'
+      : 'Delete this comment?';
+    if (!confirm(msg)) return;
+
+    // Replies are deleted first so no orphans remain if the parent delete fails.
+    var replies = repliesOf(cid).map(function (c) { return c.id; });
+    var chain = Promise.resolve();
+    replies.forEach(function (rid) {
+      chain = chain.then(function () {
+        return fetch('/api/documents/' + _docId + '/comments/' + rid, { method: 'DELETE' });
+      });
+    });
+
+    chain.then(function () {
+      return fetch('/api/documents/' + _docId + '/comments/' + cid, { method: 'DELETE' });
     }).then(function (r) {
-      if (r.status === 204) { loadComments(); }
-      else if (r.status === 403) { alert('Not authorised to delete this comment.'); }
-      else { alert('Failed to delete comment — try again.'); }
+      if (r.status === 204) {
+        if (_activeId === cid) closeCommentDetail();
+        loadComments();
+      } else if (r.status === 403) {
+        alert('Not authorised to delete this comment.');
+      } else {
+        alert('Failed to delete comment — try again.');
+      }
     }).catch(function () { alert('Network error — try again.'); });
+  }
+
+  // ── Detail popout ─────────────────────────────────────────────────────────
+
+  // openCommentDetail shows a comment, its replies and the reply form.
+  // Called from the sidebar; also scrolls the document to the anchor.
+  function openCommentDetail(cid) {
+    var c = byId(cid);
+    if (!c) return;
+    _activeId = cid;
+    _editing = false;
+    setActiveComment(cid);
+    scrollToAnchor(cid);
+    renderDetail();
+  }
+
+  function closeCommentDetail() {
+    _activeId = null;
+    _editing = false;
+    var popover = document.getElementById('comment-detail-popover');
+    if (popover) {
+      popover.hidden = true;
+      popover.style.bottom = '';
+      popover.style.maxHeight = '';
+    }
+    var scrim = document.getElementById('comment-detail-scrim');
+    if (scrim) scrim.hidden = true;
+    _detailVpListener = detachViewport(_detailVpListener);
+    setActiveComment(null);
+  }
+
+  // renderDetail rebuilds the detail popout for _activeId and positions it.
+  function renderDetail() {
+    var popover = document.getElementById('comment-detail-popover');
+    var content = document.getElementById('comment-detail-content');
+    if (!popover || !content) return;
+    var c = _activeId ? byId(_activeId) : null;
+    if (!c) { closeCommentDetail(); return; }
+
+    content.innerHTML = detailHTML(c);
+
+    var scrim = document.getElementById('comment-detail-scrim');
+    if (isMobile()) {
+      if (scrim) scrim.hidden = false;
+      openAsSheet(popover);
+    } else {
+      var mark = document.querySelector('mark.comment-anchor[data-cid="' + c.id + '"]');
+      openAsPopover(popover, mark ? mark.getBoundingClientRect() : null);
+    }
+
+    if (_editing) {
+      var edit = document.getElementById('comment-edit-input');
+      if (edit) { edit.focus(); edit.setSelectionRange(edit.value.length, edit.value.length); }
+    }
+  }
+
+  // detailHTML renders the comment body (or edit form), actions and replies.
+  function detailHTML(c) {
+    var replies = repliesOf(c.id);
+    return '' +
+      '<div class="comment-detail-header">' +
+        '<span class="comment-entry-author">' + esc(c.author || 'anonymous') + '</span>' +
+        (c.resolved ? '<span class="comment-resolved-label">Resolved</span>' : '') +
+        '<button class="comment-sidebar-close" onclick="closeCommentDetail()" aria-label="Close comment">×</button>' +
+      '</div>' +
+      '<blockquote class="comment-entry-quote">' + esc(truncate(c.quoted_text, 160)) + '</blockquote>' +
+      (_editing ? editFormHTML(c) : bodyAndActionsHTML(c)) +
+      repliesHTML(replies) +
+      replyFormHTML(c);
+  }
+
+  function editFormHTML(c) {
+    return '' +
+      '<div class="add-comment-field">' +
+        '<label for="comment-edit-input">Edit comment</label>' +
+        '<textarea id="comment-edit-input" rows="3">' + esc(c.body) + '</textarea>' +
+      '</div>' +
+      '<div class="add-comment-actions">' +
+        '<button onclick="cancelEditComment()">Cancel</button>' +
+        '<button onclick="saveEditComment()">Save</button>' +
+      '</div>';
+  }
+
+  function bodyAndActionsHTML(c) {
+    var actions = '';
+    if (canEdit(c)) {
+      actions += '<button class="comment-btn" onclick="startEditComment()">Edit</button>';
+    }
+    if (canModerate(c)) {
+      actions += '<button class="comment-btn" onclick="resolveComment(\'' + c.id + '\',' + !c.resolved + ')">' +
+                 (c.resolved ? 'Unresolve' : 'Resolve') + '</button>' +
+                 '<button class="comment-btn comment-btn--danger" onclick="deleteComment(\'' + c.id + '\')">Delete</button>';
+    }
+    return '<p class="comment-detail-body">' + esc(c.body) + '</p>' +
+           (actions ? '<div class="comment-entry-actions">' + actions + '</div>' : '');
+  }
+
+  function repliesHTML(replies) {
+    if (!replies.length) return '';
+    var items = replies.map(function (r) {
+      var del = canModerate(r)
+        ? '<button class="comment-btn comment-btn--danger" onclick="deleteComment(\'' + r.id + '\')">Delete</button>'
+        : '';
+      return '<div class="comment-reply">' +
+               '<div class="comment-entry-header">' +
+                 '<span class="comment-entry-author">' + esc(r.author || 'anonymous') + '</span>' +
+               '</div>' +
+               '<p class="comment-entry-body">' + esc(r.body) + '</p>' +
+               (del ? '<div class="comment-entry-actions">' + del + '</div>' : '') +
+             '</div>';
+    }).join('');
+    return '<div class="comment-replies">' +
+             '<p class="comment-replies-title">' + replies.length + ' repl' + (replies.length === 1 ? 'y' : 'ies') + '</p>' +
+             items +
+           '</div>';
+  }
+
+  function replyFormHTML(c) {
+    if (!canComment()) return '';
+    var name = esc(localStorage.getItem(AUTHOR_KEY) || '');
+    return '<div class="comment-reply-form">' +
+             '<div class="add-comment-field">' +
+               '<label for="comment-reply-input">Reply</label>' +
+               '<textarea id="comment-reply-input" rows="2" placeholder="Add a reply…"></textarea>' +
+             '</div>' +
+             '<div class="add-comment-field">' +
+               '<input id="comment-reply-author" type="text" placeholder="Your name (optional)" value="' + name + '">' +
+             '</div>' +
+             '<div class="add-comment-actions">' +
+               '<button id="comment-reply-btn" onclick="submitReply(\'' + c.id + '\')">Reply</button>' +
+             '</div>' +
+           '</div>';
+  }
+
+  function startEditComment() {
+    _editing = true;
+    renderDetail();
+  }
+
+  function cancelEditComment() {
+    _editing = false;
+    renderDetail();
+  }
+
+  function saveEditComment() {
+    var ta = document.getElementById('comment-edit-input');
+    var body = ta ? ta.value.trim() : '';
+    if (!body) { if (ta) ta.focus(); return; }
+    if (!_activeId) return;
+    patchComment(_activeId, { body: body });
+  }
+
+  // submitReply posts a one-level reply. The server requires an anchor on every
+  // comment, so the reply inherits the parent's quoted text and offsets.
+  function submitReply(parentId) {
+    var ta = document.getElementById('comment-reply-input');
+    var body = ta ? ta.value.trim() : '';
+    if (!body) { if (ta) ta.focus(); return; }
+    var parent = byId(parentId);
+    if (!parent) return;
+
+    var authorInput = document.getElementById('comment-reply-author');
+    var author = authorInput ? authorInput.value.trim() : '';
+    if (author) localStorage.setItem(AUTHOR_KEY, author);
+
+    var btn = document.getElementById('comment-reply-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Replying…'; }
+
+    postComment({
+      author: author,
+      body: body,
+      quoted_text: parent.quoted_text,
+      start_char: parent.start_char,
+      end_char: parent.end_char,
+      parent_id: parentId
+    }, function () {
+      loadComments();
+    }, function () {
+      if (btn) { btn.disabled = false; btn.textContent = 'Reply'; }
+    });
   }
 
   // ── Internal ──────────────────────────────────────────────────────────────
@@ -279,38 +488,48 @@
       p.removeChild(m);
     });
 
-    var toggle = document.getElementById('comment-toggle-btn');
-    var openCount = _comments.filter(function (c) { return !c.resolved; }).length;
-    if (toggle) {
-      toggle.hidden = false;
-      // Don't clobber the ready state if a selection is active.
-      if (!toggle.classList.contains('comment-toggle-btn--ready')) {
-        if (_comments.length === 0) {
-          toggle.textContent = 'Add a review';
-          toggle.onclick = showAddCommentHint;
-        } else {
-          toggle.innerHTML = 'Reviews <span id="comment-count">' + openCount + '</span>';
-          toggle.onclick = toggleCommentSidebar;
-        }
-      }
-    }
+    var roots = rootComments();
+    renderToggle(roots);
 
     var list = document.getElementById('comment-list');
     if (list) list.innerHTML = '';
 
-    _comments.forEach(function (c) {
+    roots.forEach(function (c) {
       var range = findTextRange(c.quoted_text, c.start_char, c.end_char);
       renderAnchor(c, range);
       if (list) renderGutterEntry(list, c, range);
     });
 
+    // Keep the detail popout in sync after an edit, reply or resolve.
+    if (_activeId) {
+      if (byId(_activeId)) { setActiveComment(_activeId); renderDetail(); }
+      else closeCommentDetail();
+    }
+
     if (_scrollToId) {
       var id = _scrollToId;
       _scrollToId = null;
-      requestAnimationFrame(function () {
-        var mark = document.querySelector('mark.comment-anchor[data-cid="' + id + '"]');
-        if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      });
+      requestAnimationFrame(function () { scrollToAnchor(id); });
+    }
+  }
+
+  // renderToggle updates the floating button's label, count and action.
+  function renderToggle(roots) {
+    var toggle = document.getElementById('comment-toggle-btn');
+    if (!toggle) return;
+    // Nothing to show and nothing to add: keep the button out of the way.
+    if (roots.length === 0 && !canComment()) { toggle.hidden = true; return; }
+    toggle.hidden = false;
+    // Don't clobber the ready state if a selection is active.
+    if (toggle.classList.contains('comment-toggle-btn--ready')) return;
+
+    var openCount = roots.filter(function (c) { return !c.resolved; }).length;
+    if (roots.length === 0) {
+      toggle.textContent = 'Add a review';
+      toggle.onclick = showAddCommentHint;
+    } else {
+      toggle.innerHTML = 'Reviews <span id="comment-count">' + openCount + '</span>';
+      toggle.onclick = toggleCommentSidebar;
     }
   }
 
@@ -394,9 +613,11 @@
     }
     mark.addEventListener('mouseenter', function () { highlightEntry(c.id, true); });
     mark.addEventListener('mouseleave', function () { highlightEntry(c.id, false); });
-    // Clicking an anchor opens the sidebar and scrolls to the comment entry.
-    mark.addEventListener('click', function () {
+    // Clicking an anchor opens the sidebar and marks the matching entry.
+    mark.addEventListener('click', function (e) {
+      e.stopPropagation();
       openSidebar();
+      setActiveComment(c.id);
       requestAnimationFrame(function () {
         var entry = document.getElementById('comment-entry-' + c.id);
         if (entry) entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -410,20 +631,17 @@
     div.id = 'comment-entry-' + c.id;
     div.className = 'comment-entry' +
       (c.resolved ? ' comment-entry--resolved' : '') +
-      (isStale ? ' comment-entry--stale' : '');
+      (isStale ? ' comment-entry--stale' : '') +
+      (c.id === _activeId ? ' comment-entry--selected' : '');
+    div.setAttribute('role', 'button');
+    div.setAttribute('tabindex', '0');
 
     var staleHTML = isStale
       ? '<span class="comment-stale-label" title="The document was edited — this text no longer exists">⚠ Text changed</span>'
       : '';
-    var resolveLabel = c.resolved ? 'Unresolve' : 'Resolve';
-
-    // Only show management actions to the document owner.
-    var canManage = !!window._pasteaiCanManageComments;
-    var actionsHTML = canManage
-      ? '<div class="comment-entry-actions">' +
-          '<button class="comment-btn" onclick="resolveComment(\'' + c.id + '\',' + !c.resolved + ')">' + resolveLabel + '</button>' +
-          '<button class="comment-btn comment-btn--danger" onclick="deleteComment(\'' + c.id + '\')">Delete</button>' +
-        '</div>'
+    var replyCount = repliesOf(c.id).length;
+    var replyHTML = replyCount
+      ? '<span class="comment-reply-count">' + replyCount + ' repl' + (replyCount === 1 ? 'y' : 'ies') + '</span>'
       : '';
 
     div.innerHTML =
@@ -435,11 +653,41 @@
         esc(truncate(c.quoted_text, 80)) +
       '</blockquote>' +
       '<p class="comment-entry-body">' + esc(c.body) + '</p>' +
-      actionsHTML;
+      replyHTML;
 
     div.addEventListener('mouseenter', function () { highlightAnchor(c.id, true); });
     div.addEventListener('mouseleave', function () { highlightAnchor(c.id, false); });
+    div.addEventListener('click', function (e) {
+      e.stopPropagation();
+      openCommentDetail(c.id);
+    });
+    div.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      openCommentDetail(c.id);
+    });
     list.appendChild(div);
+  }
+
+  // setActiveComment marks one comment as selected in both the document
+  // and the sidebar, clearing any previous selection. Pass null to clear.
+  function setActiveComment(cid) {
+    document.querySelectorAll('.comment-entry--selected').forEach(function (el) {
+      el.classList.remove('comment-entry--selected');
+    });
+    document.querySelectorAll('mark.comment-anchor--selected').forEach(function (el) {
+      el.classList.remove('comment-anchor--selected');
+    });
+    if (!cid) return;
+    var entry = document.getElementById('comment-entry-' + cid);
+    if (entry) entry.classList.add('comment-entry--selected');
+    var mark = document.querySelector('mark.comment-anchor[data-cid="' + cid + '"]');
+    if (mark) mark.classList.add('comment-anchor--selected');
+  }
+
+  function scrollToAnchor(cid) {
+    var mark = document.querySelector('mark.comment-anchor[data-cid="' + cid + '"]');
+    if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   function highlightEntry(cid, on) {
@@ -453,10 +701,11 @@
   }
 
   function onSelectionChange() {
-    // Don't fire while the comment form is open — typing in the textarea
-    // triggers selectionchange inside the form.
-    var popover = document.getElementById('add-comment-popover');
-    if (popover && !popover.hidden) return;
+    // Unauthenticated visitors can read comments but not create them.
+    if (!canComment()) return;
+    // Don't fire while a dialog is open — typing in a textarea inside the
+    // add form or the detail popout also triggers selectionchange.
+    if (isDialogOpen()) return;
 
     var sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) { hideFloatBtn(); return; }
@@ -474,11 +723,12 @@
     var rect = range.getBoundingClientRect();
     _pendingRect = rect;
 
-    if (_isTouchDevice || window.innerWidth < 640) {
+    if (_isTouchDevice || isMobile()) {
       // Mobile: turn the always-visible toggle button into the tap target.
       // The float button is too small and unreliable next to touch selection handles.
       var toggle = document.getElementById('comment-toggle-btn');
       if (toggle) {
+        toggle.hidden = false;
         toggle.classList.add('comment-toggle-btn--ready');
         toggle.textContent = '+ Comment';
         toggle.onclick = showAddCommentForm;
@@ -496,6 +746,12 @@
     }
   }
 
+  function isDialogOpen() {
+    var add = document.getElementById('add-comment-popover');
+    var detail = document.getElementById('comment-detail-popover');
+    return (add && !add.hidden) || (detail && !detail.hidden);
+  }
+
   function hideFloatBtn() {
     var btn = document.getElementById('add-comment-float-btn');
     if (btn) btn.hidden = true;
@@ -507,14 +763,69 @@
     if (!toggle || !toggle.classList.contains('comment-toggle-btn--ready')) return;
     toggle.classList.remove('comment-toggle-btn--ready');
     toggle.setAttribute('aria-label', 'Open reviews');
-    var openCount = _comments.filter(function (c) { return !c.resolved; }).length;
-    if (_comments.length === 0) {
-      toggle.textContent = 'Add a review';
-      toggle.onclick = showAddCommentHint;
-    } else {
-      toggle.innerHTML = 'Reviews <span id="comment-count">' + openCount + '</span>';
-      toggle.onclick = toggleCommentSidebar;
+    renderToggle(rootComments());
+  }
+
+  // ── Popover placement ─────────────────────────────────────────────────────
+
+  function isMobile() { return window.innerWidth < 640; }
+
+  // openAsSheet shows a popover as a mobile bottom sheet, keeping it above the
+  // software keyboard. No body scroll lock — setting position:fixed on <body>
+  // creates a new containing block on iOS Safari and hides fixed children.
+  // The scrim has touch-action:none to block scroll-through instead.
+  function openAsSheet(popover) {
+    popover.style.bottom = '0';
+    popover.hidden = false;
+    if (!window.visualViewport) return null;
+    var listener = function () {
+      var vv = window.visualViewport;
+      var kbHeight = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
+      popover.style.bottom = kbHeight + 'px';
+      popover.style.maxHeight = (vv.height * 0.8) + 'px';
+    };
+    window.visualViewport.addEventListener('resize', listener);
+    window.visualViewport.addEventListener('scroll', listener);
+    listener();
+    if (popover.id === 'add-comment-popover') _vpListener = listener;
+    else _detailVpListener = listener;
+    return listener;
+  }
+
+  // openAsPopover positions a popover near rect, flipping above when it would
+  // overflow the bottom of the viewport.
+  function openAsPopover(popover, rect) {
+    popover.style.bottom = '';
+    popover.style.maxHeight = '';
+    popover.style.left = '-9999px';
+    popover.style.top = '-9999px';
+    popover.hidden = false;
+
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var pw = popover.offsetWidth || 300;
+    var ph = popover.offsetHeight || 220;
+
+    if (!rect) {
+      popover.style.left = Math.max(8, (vw - pw) / 2) + 'px';
+      popover.style.top = '120px';
+      return;
     }
+    var left = Math.max(8, Math.min(rect.left + rect.width / 2 - pw / 2, vw - pw - 8));
+    var top = rect.bottom + 8;
+    if (top + ph > vh - 8) top = Math.max(8, rect.top - ph - 8);
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
+  }
+
+  // detachViewport removes a visualViewport listener and returns null so the
+  // caller can clear its handle in one statement.
+  function detachViewport(listener) {
+    if (listener && window.visualViewport) {
+      window.visualViewport.removeEventListener('resize', listener);
+      window.visualViewport.removeEventListener('scroll', listener);
+    }
+    return null;
   }
 
   function setSubmitLoading(loading) {
@@ -546,4 +857,10 @@
   window.submitAddComment = submitAddComment;
   window.resolveComment = resolveComment;
   window.deleteComment = deleteComment;
+  window.openCommentDetail = openCommentDetail;
+  window.closeCommentDetail = closeCommentDetail;
+  window.startEditComment = startEditComment;
+  window.cancelEditComment = cancelEditComment;
+  window.saveEditComment = saveEditComment;
+  window.submitReply = submitReply;
 })();

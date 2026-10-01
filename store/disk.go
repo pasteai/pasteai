@@ -193,6 +193,32 @@ func (d *DiskContent) ResolveComment(_ context.Context, docID, commentID string,
 	return &c, nil
 }
 
+// UpdateCommentBody replaces the body text of a comment and returns the updated comment.
+// Returns ErrNotFound if the comment file does not exist.
+func (d *DiskContent) UpdateCommentBody(_ context.Context, docID, commentID, body string) (*server.Comment, error) {
+	p := d.commentPath(docID, commentID)
+	data, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: comment %s", server.ErrNotFound, commentID)
+		}
+		return nil, fmt.Errorf("read comment file: %w", err)
+	}
+	var c server.Comment
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, fmt.Errorf("unmarshal comment: %w", err)
+	}
+	c.Body = body
+	updated, err := json.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("marshal comment: %w", err)
+	}
+	if err := os.WriteFile(p, updated, 0600); err != nil {
+		return nil, fmt.Errorf("write comment file: %w", err)
+	}
+	return &c, nil
+}
+
 // DeleteComment permanently removes a comment. Returns ErrNotFound if missing.
 func (d *DiskContent) DeleteComment(_ context.Context, docID, commentID string) error {
 	p := d.commentPath(docID, commentID)

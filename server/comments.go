@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -35,11 +36,21 @@ type commentResponse struct {
 	StartChar  int    `json:"start_char"`
 	EndChar    int    `json:"end_char"`
 	QuotedText string `json:"quoted_text"`
+	ParentID   string `json:"parent_id,omitempty"`
+	IsMine     bool   `json:"is_mine"`
 	Resolved   bool   `json:"resolved"`
 	CreatedAt  string `json:"created_at"`
 }
 
-func toCommentResponse(c Comment) commentResponse {
+// toCommentResponseForUser builds a commentResponse from c, populating
+// is_mine according to whether the requester (identified by ownerID)
+// owns the comment. When authEnabled is false (OSS/self-hosted mode),
+// is_mine is always true so the local user has full control.
+func toCommentResponseForUser(c Comment, ownerID string, authEnabled bool) commentResponse {
+	isMine := true
+	if authEnabled {
+		isMine = ownerID != "" && ownerID == c.OwnerID
+	}
 	return commentResponse{
 		ID:         c.ID,
 		DocID:      c.DocID,
@@ -48,6 +59,8 @@ func toCommentResponse(c Comment) commentResponse {
 		StartChar:  c.StartChar,
 		EndChar:    c.EndChar,
 		QuotedText: c.QuotedText,
+		ParentID:   c.ParentID,
+		IsMine:     isMine,
 		Resolved:   c.Resolved,
 		CreatedAt:  c.CreatedAt.UTC().Format(time.RFC3339),
 	}
@@ -59,10 +72,19 @@ type createCommentRequest struct {
 	StartChar  int    `json:"start_char"`
 	EndChar    int    `json:"end_char"`
 	QuotedText string `json:"quoted_text"`
+	ParentID   string `json:"parent_id"`
 }
 
-type resolveCommentRequest struct {
-	Resolved bool `json:"resolved"`
+type patchCommentRequest struct {
+	Resolved *bool  `json:"resolved"`
+	Body     string `json:"body"`
+}
+
+// commentBodyUpdater is a consumer-site interface for stores that support
+// updating the body of a comment. The server type-asserts CommentStore
+// implementations to this interface to enable comment editing.
+type commentBodyUpdater interface {
+	UpdateCommentBody(ctx context.Context, docID, commentID, body string) (*Comment, error)
 }
 
 func (s *srv) handleCreateComment(w http.ResponseWriter, r *http.Request) {
@@ -74,16 +96,8 @@ func (s *srv) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if req.Body == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body is required"})
-		return
-	}
-	if req.QuotedText == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "quoted_text is required"})
-		return
-	}
-	if req.StartChar >= req.EndChar {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "start_char must be less than end_char"})
+	if err := validateCreateCommentRequest(req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -110,12 +124,28 @@ func (s *srv) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 		StartChar:  req.StartChar,
 		EndChar:    req.EndChar,
 		QuotedText: req.QuotedText,
+		ParentID:   req.ParentID,
 	})
 	if err != nil {
 		s.serverError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toCommentResponse(*c))
+	authEnabled := s.authProvider != nil
+	writeJSON(w, http.StatusCreated, toCommentResponseForUser(*c, ownerID, authEnabled))
+}
+
+// validateCreateCommentRequest returns a user-facing error for invalid input.
+func validateCreateCommentRequest(req createCommentRequest) error {
+	if req.Body == "" {
+		return errors.New("body is required")
+	}
+	if req.QuotedText == "" {
+		return errors.New("quoted_text is required")
+	}
+	if req.StartChar >= req.EndChar {
+		return errors.New("start_char must be less than end_char")
+	}
+	return nil
 }
 
 func (s *srv) handleListComments(w http.ResponseWriter, r *http.Request) {
@@ -141,59 +171,104 @@ func (s *srv) handleListComments(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	ownerID := ownerFromCtx(r.Context())
+	authEnabled := s.authProvider != nil
 	resp := make([]commentResponse, len(comments))
 	for i, c := range comments {
-		resp[i] = toCommentResponse(c)
+		resp[i] = toCommentResponseForUser(c, ownerID, authEnabled)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *srv) handleResolveComment(w http.ResponseWriter, r *http.Request) {
+// handlePatchComment updates a comment's body and/or resolved status.
+// Either or both fields may be provided; at least one is required.
+func (s *srv) handlePatchComment(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	cid := r.PathValue("cid")
 	cs := s.store.(CommentStore)
 
-	var req resolveCommentRequest
+	var req patchCommentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-
-	doc, err := s.store.Get(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-			return
-		}
-		s.serverError(w, err)
+	if req.Body == "" && req.Resolved == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body or resolved is required"})
 		return
 	}
 
-	c, err := cs.GetComment(r.Context(), id, cid)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-			return
-		}
-		s.serverError(w, err)
+	doc, c, ok := s.loadCommentForPatch(w, r, id, cid)
+	if !ok {
 		return
 	}
-
 	if !s.canModifyComment(ownerFromCtx(r.Context()), c, doc) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
 		return
 	}
 
-	updated, err := cs.ResolveComment(r.Context(), id, cid, req.Resolved)
+	final := c
+	if req.Body != "" {
+		updated, err := s.updateCommentBody(r.Context(), cs, id, cid, req.Body)
+		if err != nil {
+			s.writeCommentUpdateError(w, err)
+			return
+		}
+		final = updated
+	}
+	if req.Resolved != nil {
+		updated, err := cs.ResolveComment(r.Context(), id, cid, *req.Resolved)
+		if err != nil {
+			s.writeCommentUpdateError(w, err)
+			return
+		}
+		final = updated
+	}
+	ownerID := ownerFromCtx(r.Context())
+	writeJSON(w, http.StatusOK, toCommentResponseForUser(*final, ownerID, s.authProvider != nil))
+}
+
+// loadCommentForPatch fetches the document and comment, writing errors to w.
+// Returns ok=false when the caller should stop processing.
+func (s *srv) loadCommentForPatch(w http.ResponseWriter, r *http.Request, id, cid string) (*Document, *Comment, bool) {
+	cs := s.store.(CommentStore)
+	doc, err := s.store.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
-			return
+			return nil, nil, false
 		}
 		s.serverError(w, err)
+		return nil, nil, false
+	}
+	c, err := cs.GetComment(r.Context(), id, cid)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+			return nil, nil, false
+		}
+		s.serverError(w, err)
+		return nil, nil, false
+	}
+	return doc, c, true
+}
+
+// updateCommentBody type-asserts the CommentStore to commentBodyUpdater and
+// calls UpdateCommentBody. Returns ErrNotFound if body updates are unsupported.
+func (s *srv) updateCommentBody(ctx context.Context, cs CommentStore, docID, commentID, body string) (*Comment, error) {
+	updater, ok := cs.(commentBodyUpdater)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return updater.UpdateCommentBody(ctx, docID, commentID, body)
+}
+
+// writeCommentUpdateError writes the correct HTTP response for a comment update error.
+func (s *srv) writeCommentUpdateError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, toCommentResponse(*updated))
+	s.serverError(w, err)
 }
 
 func (s *srv) handleDeleteComment(w http.ResponseWriter, r *http.Request) {
