@@ -73,5 +73,6 @@ Full reference: https://pasteai.io/d/c7e7c355-e01a-4230-8430-0fbf16a8478a
 @.claude/rules/concurrency.md
 @.claude/rules/di.md
 @.claude/rules/tdd.md
+@.claude/rules/e2e.md
 @.claude/rules/http.md
 @.claude/rules/style.md

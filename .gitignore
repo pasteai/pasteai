@@ -37,3 +37,6 @@ vendor/
 TODO.md
 .claude/settings.local.json
 .mcp.json
+
+# Agent worktrees
+.claude/worktrees/
