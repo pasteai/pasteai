@@ -584,3 +584,40 @@ type staticOwnerAuth struct{ ownerID string }
 func (a *staticOwnerAuth) Authenticate(_ *http.Request) (string, error) {
 	return a.ownerID, nil
 }
+
+// ── Deleting a document removes its comments ───────────────
+
+func TestDeleteDocument_DeletesComments(t *testing.T) {
+	ts, db := newCommentTestServer(t)
+	doc, _ := db.createDoc(context.Background(), server.Document{
+		Title:      "Test",
+		Content:    "Hello world some selected text here",
+		Visibility: server.VisibilityPublic,
+	})
+
+	if resp := postComment(t, ts, doc.ID, validComment); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed comment: expected 201, got %d", resp.StatusCode)
+	}
+	if got, _ := db.store.ListComments(context.Background(), doc.ID); len(got) != 1 {
+		t.Fatalf("expected 1 comment before delete, got %d", len(got))
+	}
+
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/documents/"+doc.ID, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("delete document: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete document: expected 204, got %d", resp.StatusCode)
+	}
+
+	// Comments must not outlive the document they annotate.
+	got, err := db.store.ListComments(context.Background(), doc.ID)
+	if err != nil {
+		t.Fatalf("list comments: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected comments to be deleted with the document, %d remain", len(got))
+	}
+}

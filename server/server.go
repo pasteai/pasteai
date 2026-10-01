@@ -627,8 +627,30 @@ func (s *srv) handleDeleteDocument(w http.ResponseWriter, r *http.Request) {
 			s.logger.Printf("delete revision content: %v", err)
 		}
 	}
+	if cs, ok := s.store.(CommentStore); ok {
+		if err := deleteDocumentComments(r.Context(), cs, id); err != nil {
+			s.logger.Printf("delete comments: %v", err)
+		}
+	}
 	s.notify(r.Context(), DocumentDeleted, ownerFromCtx(r.Context()), id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteDocumentComments removes every comment anchored to docID, so comments
+// do not outlive the document they annotate. CommentStore has no bulk delete,
+// so they are removed one at a time. Callers treat failure as non-fatal: the
+// document itself is already gone.
+func deleteDocumentComments(ctx context.Context, cs CommentStore, docID string) error {
+	comments, err := cs.ListComments(ctx, docID)
+	if err != nil {
+		return fmt.Errorf("list comments: %w", err)
+	}
+	for _, c := range comments {
+		if err := cs.DeleteComment(ctx, docID, c.ID); err != nil && !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("delete comment %s: %w", c.ID, err)
+		}
+	}
+	return nil
 }
 
 // saveRevision captures a snapshot of the document's current state before an update.
