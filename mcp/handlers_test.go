@@ -1276,3 +1276,53 @@ func TestHandleListReviews_AnonymousAuthor(t *testing.T) {
 		t.Errorf("expected 'anonymous' for empty author: %s", resultText(t, tr))
 	}
 }
+
+// A content-only update must not send an empty title. The Store contract treats
+// an empty title as "leave unchanged", but sending the key at all misrepresents
+// intent and relies on every backend honouring that — one did not, and wiped
+// the title of every document updated this way.
+func TestHandleUpdateOmitsEmptyTitle(t *testing.T) {
+	var payload map[string]any
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&payload)
+		json.NewEncoder(w).Encode(map[string]string{"url": "http://x/d/abc", "id": "abc"})
+	}))
+
+	tr, err := s.handleUpdate(context.Background(), makeReq(map[string]any{
+		"id": "abc", "content": "new content",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Fatalf("expected success: %s", resultText(t, tr))
+	}
+	if _, ok := payload["title"]; ok {
+		t.Errorf("title must be omitted when not supplied, got payload %v", payload)
+	}
+	if payload["content"] != "new content" {
+		t.Errorf("content: got %v, want %q", payload["content"], "new content")
+	}
+}
+
+// Symmetrically, a title-only update must not send an empty content.
+func TestHandleUpdateOmitsEmptyContent(t *testing.T) {
+	var payload map[string]any
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&payload)
+		json.NewEncoder(w).Encode(map[string]string{"url": "http://x/d/abc", "id": "abc"})
+	}))
+
+	tr, err := s.handleUpdate(context.Background(), makeReq(map[string]any{
+		"id": "abc", "title": "Only Title",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Fatalf("expected success: %s", resultText(t, tr))
+	}
+	if _, ok := payload["content"]; ok {
+		t.Errorf("content must be omitted when not supplied, got payload %v", payload)
+	}
+}

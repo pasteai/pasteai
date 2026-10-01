@@ -429,7 +429,15 @@ func (s *Server) handleUpdate(_ context.Context, req mcpgo.CallToolRequest) (*mc
 		return mcpgo.NewToolResultError("at least one of title or content is required"), nil
 	}
 
-	payload := map[string]string{"title": title, "content": content}
+	// Only send what the caller actually supplied. Sending an empty title asks
+	// the server to blank it, which is not what "omit to keep existing" means.
+	payload := map[string]string{}
+	if title != "" {
+		payload["title"] = title
+	}
+	if content != "" {
+		payload["content"] = content
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return mcpgo.NewToolResultError(fmt.Sprintf("failed to serialise request: %v", err)), nil
