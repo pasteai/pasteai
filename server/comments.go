@@ -82,6 +82,32 @@ type patchCommentRequest struct {
 	Body     string `json:"body"`
 }
 
+// userNamer is a consumer-site interface for AuthProviders that can resolve a
+// display name for an authenticated user. The hosted service implements it from
+// the session's GitHub login; the self-hosted server has no concept of a user
+// name and does not.
+type userNamer interface {
+	DisplayName(ctx context.Context, ownerID string) string
+}
+
+// commentAuthor decides the name a comment is attributed to. When the server
+// can identify the user it wins, so the browser need not ask for a name and a
+// caller cannot post under someone else's. Otherwise the client's value is
+// used, which keeps the API usable for self-hosted and script callers.
+func (s *srv) commentAuthor(ctx context.Context, ownerID, requested string) string {
+	if ownerID == "" {
+		return requested
+	}
+	namer, ok := s.authProvider.(userNamer)
+	if !ok {
+		return requested
+	}
+	if name := namer.DisplayName(ctx, ownerID); name != "" {
+		return name
+	}
+	return requested
+}
+
 // currentRevisionNum reports how many revisions the document has, which is the
 // version a comment written now is anchored against. Zero when the store keeps
 // no history, which is the self-hosted default.
@@ -136,7 +162,7 @@ func (s *srv) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 	ownerID := ownerFromCtx(r.Context())
 	c, err := cs.AddComment(r.Context(), Comment{
 		DocID:       id,
-		Author:      req.Author,
+		Author:      s.commentAuthor(r.Context(), ownerID, req.Author),
 		OwnerID:     ownerID,
 		Body:        req.Body,
 		StartChar:   req.StartChar,

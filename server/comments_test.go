@@ -626,6 +626,75 @@ func TestDeleteDocument_DeletesComments(t *testing.T) {
 
 // namedOwnerAuth is an AuthProvider that can also resolve a display name,
 // the way the hosted service resolves a GitHub login from a session.
+type namedOwnerAuth struct {
+	ownerID string
+	name    string
+}
+
+func (a *namedOwnerAuth) Authenticate(_ *http.Request) (string, error) { return a.ownerID, nil }
+
+func (a *namedOwnerAuth) DisplayName(_ context.Context, ownerID string) string {
+	if ownerID == a.ownerID {
+		return a.name
+	}
+	return ""
+}
+
+// When the server can identify the user, the comment is attributed to them and
+// any author supplied by the client is ignored — the browser no longer asks for
+// a name, and a caller must not be able to post under someone else's.
+func TestCreateComment_AuthorFromAuthenticatedUser(t *testing.T) {
+	cs := newMemCommentStore()
+	content := newMemContent()
+	auth := &namedOwnerAuth{ownerID: "user-a", name: "octocat"}
+	handler := server.NewServer(cs, content, server.Options{
+		Logger:               log.New(io.Discard, "", 0),
+		AuthProvider:         auth,
+		AllowAnonymousWrites: true,
+	})
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	doc, _ := cs.Create(context.Background(), server.Document{
+		Title: "T", Visibility: server.VisibilityPublic, OwnerID: "user-a",
+	})
+	content.Put(context.Background(), doc.ID, []byte("Hello world some selected text here"))
+
+	resp := postComment(t, ts, doc.ID, map[string]any{
+		"author": "spoofed", "body": "hi", "quoted_text": "some selected text",
+		"start_char": 12, "end_char": 30,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	if got := decodeComment(t, resp)["author"]; got != "octocat" {
+		t.Errorf("author = %v, want octocat (client value must not win)", got)
+	}
+}
+
+// With no way to identify the user (self-hosted, no auth) the comment stays
+// anonymous rather than carrying a name the browser made up.
+func TestCreateComment_AnonymousWhenNoUserName(t *testing.T) {
+	ts, db := newCommentTestServer(t)
+	doc, _ := db.createDoc(context.Background(), server.Document{
+		Title: "T", Content: "Hello world some selected text here", Visibility: server.VisibilityPublic,
+	})
+	resp := postComment(t, ts, doc.ID, map[string]any{
+		"body": "hi", "quoted_text": "some selected text",
+		"start_char": 12, "end_char": 30,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	if got := decodeComment(t, resp)["author"]; got != "" {
+		t.Errorf("author = %v, want empty", got)
+	}
+}
+
+// ── Comments record the document version they were written against ──
+
+// revisionCommentStore is a CommentStore that also keeps revisions, so a
+// comment can record which version of the document it was written against.
 type revisionCommentStore struct {
 	*memCommentStore
 	revisions []server.Revision
