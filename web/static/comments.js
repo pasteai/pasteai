@@ -495,11 +495,37 @@
   function copyCommentLink(cid) {
     var url = window.location.origin + window.location.pathname + '#comment-' + cid;
     var done = function () { showToast('Link to this comment copied.'); };
+    var fail = function () { showToast('Could not copy. The link is ' + url); };
+    var legacy = function () { if (copyLegacy(url)) done(); else fail(); };
+
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url).then(done, function () { showToast(url); });
+      navigator.clipboard.writeText(url).then(done, legacy);
       return;
     }
-    showToast(url);
+    legacy();
+  }
+
+  // copyLegacy copies through a throwaway textarea, the only way to reach the
+  // clipboard where navigator.clipboard is absent: the browser exposes it on
+  // HTTPS and localhost only, so any plain-HTTP origin — a dev stack on a LAN
+  // address, an internal host — has nothing else. Reports whether it worked.
+  function copyLegacy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    // Off-screen but rendered: display:none or hidden leaves the selection
+    // empty and the copy silently does nothing.
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta);
+    try {
+      ta.focus();
+      ta.select();
+      return document.execCommand('copy');
+    } catch (_) {
+      return false;
+    } finally {
+      document.body.removeChild(ta);
+    }
   }
 
   function startEditComment() {
@@ -1107,7 +1133,6 @@
     popover.style.maxHeight = (vh - 16) + 'px';
     ph = Math.min(ph, vh - 16);
     top = Math.max(8, Math.min(top, vh - ph - 8));
-
 
     popover.style.left = left + 'px';
     popover.style.top = top + 'px';

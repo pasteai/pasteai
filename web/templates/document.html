@@ -408,11 +408,24 @@ initComments('{{.Document.ID}}');
 
   // ── Copy link ─────────────────────────────────────────────
   function copyDocLink() {
-    navigator.clipboard.writeText(window.location.href).then(function() {
-      var span = document.querySelector('.copy-link-text');
-      span.textContent = 'Copied!';
+    var span = document.querySelector('.copy-link-text');
+    function flash(text) {
+      span.textContent = text;
       setTimeout(function() { span.textContent = 'Copy link'; }, 2000);
-    });
+    }
+    var onSuccess = function() { flash('Copied!'); };
+    var onFail = function() { flash('Press Ctrl+C'); };
+    var url = window.location.href;
+
+    // navigator.clipboard is undefined off HTTPS and localhost, where this
+    // used to throw and leave the button doing nothing at all.
+    try {
+      navigator.clipboard.writeText(url).then(onSuccess, function() {
+        copyFallback(url, onSuccess, onFail);
+      });
+    } catch(e) {
+      copyFallback(url, onSuccess, onFail);
+    }
   }
 
   // ── Heading anchors ───────────────────────────────────────
