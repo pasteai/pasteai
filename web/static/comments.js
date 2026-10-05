@@ -720,6 +720,32 @@
     return null;
   }
 
+  // rangeToCharOffsets is the inverse of rangeFromOffsets: where a live
+  // selection sits in the flattened article text, so the offsets can be stored
+  // with the comment and the quote re-found on a later visit.
+  //
+  // Measured with a second range rather than by walking flat.nodes, because a
+  // selection boundary may land on an element (dragging past the end of a
+  // paragraph gives an element container and a child index, not a text node).
+  // Range.toString() concatenates exactly the text nodes flattenArticle walks,
+  // so the two agree on what an offset counts.
+  //
+  // The caller trims the quote before storing it, so the offsets are trimmed to
+  // match — otherwise locateQuote's exact-offset check fails on any selection
+  // with whitespace at an edge and it falls back to searching by text.
+  function rangeToCharOffsets(range, article) {
+    var before = document.createRange();
+    before.selectNodeContents(article);
+    before.setEnd(range.startContainer, range.startOffset);
+
+    var raw = range.toString();
+    var lead = raw.length - raw.replace(/^\s+/, '').length;
+    var trail = raw.length - raw.replace(/\s+$/, '').length;
+
+    var start = before.toString().length + lead;
+    return { start: start, end: start + (raw.length - lead - trail) };
+  }
+
   // ── Sidebar ───────────────────────────────────────────────────────────────
 
   // renderToggle updates the floating button's label, count and action.
