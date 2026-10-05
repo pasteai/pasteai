@@ -233,6 +233,22 @@ func (s *Server) registerTools(srv *mcpserver.MCPServer) {
 	)
 	srv.AddTool(searchTool, s.handleSearch)
 
+	resolveReviewTool := mcpgo.NewTool("resolve_review",
+		mcpgo.WithDescription("Mark a review (comment) resolved once you have acted on it. Use the review ID from list_reviews."),
+		mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("The document ID")),
+		mcpgo.WithString("review_id", mcpgo.Required(), mcpgo.Description("The review ID from list_reviews")),
+		mcpgo.WithBoolean("resolved", mcpgo.Description("Set false to reopen a resolved review. Defaults to true.")),
+	)
+	srv.AddTool(resolveReviewTool, s.handleResolveReview)
+
+	replyReviewTool := mcpgo.NewTool("reply_to_review",
+		mcpgo.WithDescription("Reply to a review (comment), for example to say how you addressed it. Use the review ID from list_reviews."),
+		mcpgo.WithString("id", mcpgo.Required(), mcpgo.Description("The document ID")),
+		mcpgo.WithString("review_id", mcpgo.Required(), mcpgo.Description("The review ID from list_reviews")),
+		mcpgo.WithString("body", mcpgo.Required(), mcpgo.Description("The reply text")),
+	)
+	srv.AddTool(replyReviewTool, s.handleReplyToReview)
+
 	listReviewsTool := mcpgo.NewTool("list_reviews",
 		mcpgo.WithDescription("List human reviews (comments) on a PasteAI document. Use this to read feedback before revising with update_document."),
 		mcpgo.WithString("id",
@@ -462,7 +478,9 @@ func (s *Server) handleUpdate(_ context.Context, req mcpgo.CallToolRequest) (*mc
 		return mcpgo.NewToolResultError(fmt.Sprintf("document %q not found", id)), nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		var errBody struct{ Error string `json:"error"` }
+		var errBody struct {
+			Error string `json:"error"`
+		}
 		if json.NewDecoder(resp.Body).Decode(&errBody) == nil && errBody.Error != "" {
 			return mcpgo.NewToolResultError(fmt.Sprintf("server error (%d): %s", resp.StatusCode, errBody.Error)), nil
 		}
@@ -604,7 +622,9 @@ func (s *Server) handleSetVisibility(_ context.Context, req mcpgo.CallToolReques
 		return mcpgo.NewToolResultError(fmt.Sprintf("document %q not found", id)), nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		var errBody struct{ Error string `json:"error"` }
+		var errBody struct {
+			Error string `json:"error"`
+		}
 		if json.NewDecoder(resp.Body).Decode(&errBody) == nil && errBody.Error != "" {
 			return mcpgo.NewToolResultError(fmt.Sprintf("server error (%d): %s", resp.StatusCode, errBody.Error)), nil
 		}
@@ -612,6 +632,179 @@ func (s *Server) handleSetVisibility(_ context.Context, req mcpgo.CallToolReques
 	}
 
 	return mcpgo.NewToolResultText(fmt.Sprintf("Document %q visibility set to %s.", id, visibility)), nil
+}
+
+// reviewComment is the subset of the comments API the MCP tools need.
+type reviewComment struct {
+	ID          string `json:"id"`
+	Author      string `json:"author"`
+	Body        string `json:"body"`
+	QuotedText  string `json:"quoted_text"`
+	StartChar   int    `json:"start_char"`
+	EndChar     int    `json:"end_char"`
+	ParentID    string `json:"parent_id"`
+	RevisionNum int    `json:"revision_num"`
+	Resolved    bool   `json:"resolved"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// writeReview renders one review and its replies. The id is included so the
+// agent can resolve or reply to this exact review afterwards.
+func writeReview(sb *strings.Builder, c reviewComment, replies []reviewComment) {
+	status := "open"
+	if c.Resolved {
+		status = "resolved"
+	}
+	fmt.Fprintf(sb, "### Review %s\n", c.ID)
+	fmt.Fprintf(sb, "[%s] %s (%s", status, reviewAuthor(c.Author), c.CreatedAt)
+	if c.RevisionNum > 0 {
+		fmt.Fprintf(sb, ", written against v%d", c.RevisionNum)
+	}
+	fmt.Fprintf(sb, ")\n")
+	fmt.Fprintf(sb, "> %q\n", c.QuotedText)
+	fmt.Fprintf(sb, "%s\n", c.Body)
+	for _, r := range replies {
+		fmt.Fprintf(sb, "  - reply from %s (%s): %s\n", reviewAuthor(r.Author), r.CreatedAt, r.Body)
+	}
+	fmt.Fprintf(sb, "\n---\n\n")
+}
+
+func reviewAuthor(a string) string {
+	if a == "" {
+		return "anonymous"
+	}
+	return a
+}
+
+// fetchReviews returns every comment on a document, replies included.
+func (s *Server) fetchReviews(docID string) ([]reviewComment, error) {
+	httpReq, err := http.NewRequest(http.MethodGet, s.baseURL+"/api/documents/"+docID+"/comments", nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	if s.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("reach PasteAI server: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
+	}
+	var comments []reviewComment
+	if err := json.NewDecoder(resp.Body).Decode(&comments); err != nil {
+		return nil, fmt.Errorf("parse server response: %w", err)
+	}
+	return comments, nil
+}
+
+// handleResolveReview marks a review resolved, so an agent can retire feedback
+// it has acted on instead of leaving every document permanently open.
+func (s *Server) handleResolveReview(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	docID := req.GetString("id", "")
+	reviewID := req.GetString("review_id", "")
+	if docID == "" || reviewID == "" {
+		return mcpgo.NewToolResultError("id and review_id are required"), nil
+	}
+	resolved := req.GetBool("resolved", true)
+
+	body, err := json.Marshal(map[string]bool{"resolved": resolved})
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to serialise request: %v", err)), nil
+	}
+	httpReq, err := http.NewRequest(http.MethodPatch,
+		s.baseURL+"/api/documents/"+docID+"/comments/"+reviewID, bytes.NewReader(body))
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to build request: %v", err)), nil
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if s.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to reach PasteAI server: %v", err)), nil
+	}
+	defer resp.Body.Close()
+	if msg := reviewHTTPError(resp, reviewID); msg != "" {
+		return mcpgo.NewToolResultError(msg), nil
+	}
+	verb := "resolved"
+	if !resolved {
+		verb = "reopened"
+	}
+	return mcpgo.NewToolResultText(fmt.Sprintf("Review %s %s.", reviewID, verb)), nil
+}
+
+// handleReplyToReview posts a reply to a review. The reply inherits the
+// parent's anchor, so the server keeps it attached to the same passage.
+func (s *Server) handleReplyToReview(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	docID := req.GetString("id", "")
+	reviewID := req.GetString("review_id", "")
+	replyBody := req.GetString("body", "")
+	if docID == "" || reviewID == "" || replyBody == "" {
+		return mcpgo.NewToolResultError("id, review_id and body are required"), nil
+	}
+
+	comments, err := s.fetchReviews(docID)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to read reviews: %v", err)), nil
+	}
+	var parent *reviewComment
+	for i := range comments {
+		if comments[i].ID == reviewID {
+			parent = &comments[i]
+			break
+		}
+	}
+	if parent == nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("review %q not found on document %q", reviewID, docID)), nil
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"body":        replyBody,
+		"parent_id":   parent.ID,
+		"quoted_text": parent.QuotedText,
+		"start_char":  parent.StartChar,
+		"end_char":    parent.EndChar,
+	})
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to serialise request: %v", err)), nil
+	}
+	httpReq, err := http.NewRequest(http.MethodPost,
+		s.baseURL+"/api/documents/"+docID+"/comments", bytes.NewReader(body))
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to build request: %v", err)), nil
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if s.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return mcpgo.NewToolResultError(fmt.Sprintf("failed to reach PasteAI server: %v", err)), nil
+	}
+	defer resp.Body.Close()
+	if msg := reviewHTTPError(resp, reviewID); msg != "" {
+		return mcpgo.NewToolResultError(msg), nil
+	}
+	return mcpgo.NewToolResultText(fmt.Sprintf("Replied to review %s.", reviewID)), nil
+}
+
+// reviewHTTPError maps a non-success response to a user-facing message,
+// returning "" when the response was a success.
+func reviewHTTPError(resp *http.Response, reviewID string) string {
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		return fmt.Sprintf("review %q not found", reviewID)
+	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized:
+		return "not authorised to modify this review"
+	case resp.StatusCode >= 300:
+		return fmt.Sprintf("server returned %d", resp.StatusCode)
+	}
+	return ""
 }
 
 func (s *Server) handleListReviews(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -645,39 +838,33 @@ func (s *Server) handleListReviews(_ context.Context, req mcpgo.CallToolRequest)
 		return mcpgo.NewToolResultError(fmt.Sprintf("server returned %d", resp.StatusCode)), nil
 	}
 
-	var comments []struct {
-		ID         string `json:"id"`
-		Author     string `json:"author"`
-		Body       string `json:"body"`
-		QuotedText string `json:"quoted_text"`
-		Resolved   bool   `json:"resolved"`
-		CreatedAt  string `json:"created_at"`
-	}
+	var comments []reviewComment
 	if err := json.NewDecoder(resp.Body).Decode(&comments); err != nil {
 		return mcpgo.NewToolResultError("failed to parse server response"), nil
 	}
 
 	var sb strings.Builder
 	count := 0
+	byParent := map[string][]reviewComment{}
 	for _, c := range comments {
+		if c.ParentID != "" {
+			byParent[c.ParentID] = append(byParent[c.ParentID], c)
+		}
+	}
+	for _, c := range comments {
+		// Replies are rendered under their parent, never as reviews of their own:
+		// they inherit the parent's quoted text and would read as duplicates.
+		if c.ParentID != "" {
+			continue
+		}
 		if !includeResolved && c.Resolved {
 			continue
 		}
 		count++
-		status := "open"
-		if c.Resolved {
-			status = "resolved"
-		}
-		author := c.Author
-		if author == "" {
-			author = "anonymous"
-		}
 		if count == 1 {
 			fmt.Fprintf(&sb, "## Reviews for document %s\n\n", id)
 		}
-		fmt.Fprintf(&sb, "[%s] %s (%s)\n", status, author, c.CreatedAt)
-		fmt.Fprintf(&sb, "> %q\n", c.QuotedText)
-		fmt.Fprintf(&sb, "%s\n\n---\n\n", c.Body)
+		writeReview(&sb, c, byParent[c.ID])
 	}
 
 	if count == 0 {

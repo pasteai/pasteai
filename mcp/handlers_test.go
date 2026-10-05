@@ -1326,3 +1326,116 @@ func TestHandleUpdateOmitsEmptyContent(t *testing.T) {
 		t.Errorf("content must be omitted when not supplied, got payload %v", payload)
 	}
 }
+
+// ── Reviews: the agent half of the review loop ─────────────
+
+// The agent revising a document must be able to cite a specific comment and
+// tell replies apart from top-level reviews. Replies carry the parent's quoted
+// text, so without threading they arrive as duplicate reviews of one passage.
+func TestHandleListReviewsShowsIDsAndThreads(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": "c1", "author": "tim", "body": "Too vague", "quoted_text": "the thing",
+				"resolved": false, "created_at": "2026-10-01T10:00:00Z", "revision_num": 2},
+			{"id": "c2", "author": "sam", "body": "Agreed", "quoted_text": "the thing",
+				"resolved": false, "created_at": "2026-10-01T11:00:00Z", "parent_id": "c1"},
+		})
+	}))
+
+	tr, err := s.handleListReviews(context.Background(), makeReq(map[string]any{"id": "doc1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := resultText(t, tr)
+	if !strings.Contains(out, "c1") {
+		t.Errorf("comment id missing, agent cannot cite it:\n%s", out)
+	}
+	if strings.Count(out, "the thing") != 1 {
+		t.Errorf("quoted text repeated for the reply — reads as two reviews:\n%s", out)
+	}
+	if !strings.Contains(out, "Agreed") {
+		t.Errorf("reply body missing:\n%s", out)
+	}
+	if !strings.Contains(out, "v2") {
+		t.Errorf("revision the review was written against missing:\n%s", out)
+	}
+}
+
+func TestHandleResolveReview(t *testing.T) {
+	var method, path string
+	var payload map[string]any
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		json.NewDecoder(r.Body).Decode(&payload)
+		json.NewEncoder(w).Encode(map[string]any{"id": "c1", "resolved": true})
+	}))
+
+	tr, err := s.handleResolveReview(context.Background(), makeReq(map[string]any{
+		"id": "doc1", "review_id": "c1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Fatalf("expected success: %s", resultText(t, tr))
+	}
+	if method != http.MethodPatch {
+		t.Errorf("method = %s, want PATCH", method)
+	}
+	if path != "/api/documents/doc1/comments/c1" {
+		t.Errorf("path = %s", path)
+	}
+	if payload["resolved"] != true {
+		t.Errorf("payload = %v, want resolved:true", payload)
+	}
+}
+
+func TestHandleReplyToReview(t *testing.T) {
+	var payload map[string]any
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "c1", "body": "Too vague", "quoted_text": "the thing",
+					"start_char": 4, "end_char": 13, "created_at": "2026-10-01T10:00:00Z"},
+			})
+			return
+		}
+		json.NewDecoder(r.Body).Decode(&payload)
+		json.NewEncoder(w).Encode(map[string]any{"id": "c2"})
+	}))
+
+	tr, err := s.handleReplyToReview(context.Background(), makeReq(map[string]any{
+		"id": "doc1", "review_id": "c1", "body": "Fixed in the latest revision.",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.IsError {
+		t.Fatalf("expected success: %s", resultText(t, tr))
+	}
+	// A reply must anchor to the same passage as its parent.
+	if payload["parent_id"] != "c1" {
+		t.Errorf("parent_id = %v, want c1", payload["parent_id"])
+	}
+	if payload["quoted_text"] != "the thing" {
+		t.Errorf("quoted_text = %v, want the parent's", payload["quoted_text"])
+	}
+	if payload["body"] != "Fixed in the latest revision." {
+		t.Errorf("body = %v", payload["body"])
+	}
+}
+
+func TestHandleReplyToReviewUnknownParent(t *testing.T) {
+	s := newTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{})
+	}))
+	tr, err := s.handleReplyToReview(context.Background(), makeReq(map[string]any{
+		"id": "doc1", "review_id": "nope", "body": "x",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tr.IsError {
+		t.Error("expected an error for an unknown review id")
+	}
+}
