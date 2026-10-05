@@ -176,6 +176,13 @@
     });
   }
 
+  // showAddCommentHint backs the toggle button while a document has no
+  // comments yet. Opening an empty sidebar says nothing, so point at the one
+  // thing that starts a comment instead.
+  function showAddCommentHint() {
+    showToast('Select some text in the document to comment on it.');
+  }
+
   function toggleCommentSidebar() {
     var sidebar = document.getElementById('comment-sidebar');
     if (!sidebar) return;
