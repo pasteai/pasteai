@@ -352,6 +352,19 @@
 
   // openCommentDetail shows a comment, its replies and the reply form.
   // Called from the sidebar; also scrolls the document to the anchor.
+  // openComment is the single way into a comment. The highlight in the document
+  // and the sidebar entry both land here, so clicking either gives the same
+  // result: sidebar open, popout open, document scrolled to the anchor and the
+  // entry brought into view in a long list.
+  function openComment(cid) {
+    openSidebar();
+    openCommentDetail(cid);
+    requestAnimationFrame(function () {
+      var entry = document.getElementById('comment-entry-' + cid);
+      if (entry) entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  }
+
   function openCommentDetail(cid) {
     var c = byId(cid);
     if (!c) return;
@@ -604,8 +617,7 @@
       _filter = c.resolved ? 'resolved' : 'open';
       renderAll();
     }
-    openSidebar();
-    openCommentDetail(id);
+    openComment(id);
   }
 
   // ── Anchoring ─────────────────────────────────────────────────────────────
@@ -706,12 +718,7 @@
     mark.addEventListener('mouseleave', function () { highlightEntry(cid, false); });
     mark.addEventListener('click', function (e) {
       e.stopPropagation();
-      openSidebar();
-      setActiveComment(cid);
-      requestAnimationFrame(function () {
-        var entry = document.getElementById('comment-entry-' + cid);
-        if (entry) entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      });
+      openComment(cid);
     });
   }
 
@@ -858,12 +865,12 @@
     div.addEventListener('mouseleave', function () { highlightAnchor(c.id, false); });
     div.addEventListener('click', function (e) {
       e.stopPropagation();
-      openCommentDetail(c.id);
+      openComment(c.id);
     });
     div.addEventListener('keydown', function (e) {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       e.preventDefault();
-      openCommentDetail(c.id);
+      openComment(c.id);
     });
     list.appendChild(div);
   }
