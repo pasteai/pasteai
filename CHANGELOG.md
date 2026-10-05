@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.0.20](https://github.com/pasteai/pasteai/compare/v0.0.19...v0.0.20) (2026-10-05)
+
+
+### Features
+
+* add comment detail popout, editing, replies and author permissions ([641a309](https://github.com/pasteai/pasteai/commit/641a30903ee4de87c8a2d400f6fd015f6478802d))
+* add CommentStore methods to DiskContent for file-based comment storage ([3294c96](https://github.com/pasteai/pasteai/commit/3294c96e07bdfb7c67220b34342f1666d03e6a85))
+* **comments:** add a detail popout with replies, filters and revision links ([c0c088f](https://github.com/pasteai/pasteai/commit/c0c088f3132d85ccfde5bb6b8158f075dd6777b9))
+* **comments:** attribute a comment to the signed-in user, not the client ([2b81df2](https://github.com/pasteai/pasteai/commit/2b81df2ff53709ed9e066d3f4061b9d8918b17f4))
+* **comments:** record the revision each comment was written against ([fdec7ed](https://github.com/pasteai/pasteai/commit/fdec7ed42218981a5f7fb66e4a01599193e4be67))
+* **comments:** show a reply count on sidebar entries ([c358a5b](https://github.com/pasteai/pasteai/commit/c358a5bddc0f4ca40ab74e85ccf552fcbee5b176))
+* **mcp:** add resolve_review and reply_to_review tools ([40e4db0](https://github.com/pasteai/pasteai/commit/40e4db00984b9b58b394ebd8468d953a992d0316))
+
+
+### Bug Fixes
+
+* **clipboard:** fall back to execCommand where the clipboard API is absent ([3a95349](https://github.com/pasteai/pasteai/commit/3a95349545b61c5760286432715660a5d4303f9c))
+* **comments:** define rangeToCharOffsets so selecting text offers a comment ([6b9e15e](https://github.com/pasteai/pasteai/commit/6b9e15e661087f0ee5e6a40aa065364339d061bb))
+* **comments:** define showAddCommentHint so deleting the last comment clears it ([5c233c9](https://github.com/pasteai/pasteai/commit/5c233c97e1ce19e38775b84d6390e3156dbfbdfd))
+* **comments:** keep the add-comment form on screen for a quote past the fold ([fa80083](https://github.com/pasteai/pasteai/commit/fa800835de06ad37f686cf3eddcd92335af8bbf9))
+* **comments:** open the sidebar, popout and anchor from either entry point ([68806a2](https://github.com/pasteai/pasteai/commit/68806a2e0eb02ff13658eceea7a55da5b9dcbfaa))
+* delete a document's comments along with the document ([eb65d62](https://github.com/pasteai/pasteai/commit/eb65d62d5db201e95ebf18f7b6aef5777c91ec02))
+* honour limit and accept either pagination token on the list API ([1f18946](https://github.com/pasteai/pasteai/commit/1f18946816d021c35b07cf9de5f1b58321e9ac9d))
+* stop MCP update_document clearing the title when only content is given ([4be419e](https://github.com/pasteai/pasteai/commit/4be419e755acfd30ef41b071289fbc9f71f3f48f))
+
 ## [0.0.19](https://github.com/pasteai/pasteai/compare/v0.0.18...v0.0.19) (2026-06-14)
 
 
