@@ -434,8 +434,8 @@ func TestResolveComment_ForbiddenWrongOwner(t *testing.T) {
 	content := newMemContent()
 	auth := &staticOwnerAuth{ownerID: "user-b"}
 	handler := server.NewServer(cs, content, server.Options{
-		Logger:              log.New(io.Discard, "", 0),
-		AuthProvider:        auth,
+		Logger:               log.New(io.Discard, "", 0),
+		AuthProvider:         auth,
 		AllowAnonymousWrites: true,
 	})
 	ts := httptest.NewServer(handler)
@@ -499,8 +499,8 @@ func TestDeleteComment_ForbiddenWrongOwner(t *testing.T) {
 	content := newMemContent()
 	auth := &staticOwnerAuth{ownerID: "user-b"}
 	handler := server.NewServer(cs, content, server.Options{
-		Logger:              log.New(io.Discard, "", 0),
-		AuthProvider:        auth,
+		Logger:               log.New(io.Discard, "", 0),
+		AuthProvider:         auth,
 		AllowAnonymousWrites: true,
 	})
 	ts := httptest.NewServer(handler)
@@ -550,8 +550,8 @@ func TestResolveComment_DocOwnerCanModify(t *testing.T) {
 	// doc owner is user-a; request comes from user-a
 	auth := &staticOwnerAuth{ownerID: "user-a"}
 	handler := server.NewServer(cs, content, server.Options{
-		Logger:              log.New(io.Discard, "", 0),
-		AuthProvider:        auth,
+		Logger:               log.New(io.Discard, "", 0),
+		AuthProvider:         auth,
 		AllowAnonymousWrites: true,
 	})
 	ts := httptest.NewServer(handler)
@@ -619,5 +619,85 @@ func TestDeleteDocument_DeletesComments(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("expected comments to be deleted with the document, %d remain", len(got))
+	}
+}
+
+// ── Author name comes from the authenticated user ──────────
+
+// namedOwnerAuth is an AuthProvider that can also resolve a display name,
+// the way the hosted service resolves a GitHub login from a session.
+type revisionCommentStore struct {
+	*memCommentStore
+	revisions []server.Revision
+}
+
+func (r *revisionCommentStore) SaveRevision(_ context.Context, rev server.Revision) (*server.Revision, error) {
+	rev.Num = len(r.revisions) + 1
+	r.revisions = append(r.revisions, rev)
+	return &rev, nil
+}
+
+func (r *revisionCommentStore) ListRevisions(_ context.Context, docID string) ([]server.Revision, error) {
+	var out []server.Revision
+	for i := len(r.revisions) - 1; i >= 0; i-- {
+		if r.revisions[i].DocID == docID {
+			out = append(out, r.revisions[i])
+		}
+	}
+	return out, nil
+}
+
+func (r *revisionCommentStore) GetRevision(_ context.Context, docID string, num int) (*server.Revision, error) {
+	for _, rev := range r.revisions {
+		if rev.DocID == docID && rev.Num == num {
+			return &rev, nil
+		}
+	}
+	return nil, server.ErrNotFound
+}
+
+func (r *revisionCommentStore) DeleteRevisions(_ context.Context, docID string) error { return nil }
+
+// A document rewritten by an agent can strand its comments, so each comment
+// records how many revisions existed when it was written. That turns a dead
+// "text changed" state into "changed since v2".
+func TestCreateComment_RecordsRevisionNumber(t *testing.T) {
+	store := &revisionCommentStore{memCommentStore: newMemCommentStore()}
+	content := newMemContent()
+	handler := server.NewServer(store, content, server.Options{Logger: log.New(io.Discard, "", 0)})
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	doc, _ := store.Create(context.Background(), server.Document{
+		Title: "T", Visibility: server.VisibilityPublic,
+	})
+	content.Put(context.Background(), doc.ID, []byte("Hello world some selected text here"))
+
+	// Two prior updates, so the live document is version 2.
+	store.SaveRevision(context.Background(), server.Revision{DocID: doc.ID})
+	store.SaveRevision(context.Background(), server.Revision{DocID: doc.ID})
+
+	resp := postComment(t, ts, doc.ID, validComment)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	got := decodeComment(t, resp)
+	if got["revision_num"] != float64(2) {
+		t.Errorf("revision_num = %v, want 2", got["revision_num"])
+	}
+}
+
+// With no revision history there is nothing to pin to, and the field stays zero.
+func TestCreateComment_RevisionNumberZeroWithoutRevisions(t *testing.T) {
+	ts, db := newCommentTestServer(t)
+	doc, _ := db.createDoc(context.Background(), server.Document{
+		Title: "T", Content: "Hello world some selected text here", Visibility: server.VisibilityPublic,
+	})
+	resp := postComment(t, ts, doc.ID, validComment)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	if got := decodeComment(t, resp)["revision_num"]; got != float64(0) {
+		t.Errorf("revision_num = %v, want 0", got)
 	}
 }

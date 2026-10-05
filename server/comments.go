@@ -29,17 +29,18 @@ func (s *srv) canModifyComment(requesterOwnerID string, c *Comment, doc *Documen
 
 // commentResponse is the API-visible shape of a Comment. OwnerID is intentionally excluded.
 type commentResponse struct {
-	ID         string `json:"id"`
-	DocID      string `json:"doc_id"`
-	Author     string `json:"author"`
-	Body       string `json:"body"`
-	StartChar  int    `json:"start_char"`
-	EndChar    int    `json:"end_char"`
-	QuotedText string `json:"quoted_text"`
-	ParentID   string `json:"parent_id,omitempty"`
-	IsMine     bool   `json:"is_mine"`
-	Resolved   bool   `json:"resolved"`
-	CreatedAt  string `json:"created_at"`
+	ID          string `json:"id"`
+	DocID       string `json:"doc_id"`
+	Author      string `json:"author"`
+	Body        string `json:"body"`
+	StartChar   int    `json:"start_char"`
+	EndChar     int    `json:"end_char"`
+	QuotedText  string `json:"quoted_text"`
+	ParentID    string `json:"parent_id,omitempty"`
+	RevisionNum int    `json:"revision_num"`
+	IsMine      bool   `json:"is_mine"`
+	Resolved    bool   `json:"resolved"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // toCommentResponseForUser builds a commentResponse from c, populating
@@ -52,17 +53,18 @@ func toCommentResponseForUser(c Comment, ownerID string, authEnabled bool) comme
 		isMine = ownerID != "" && ownerID == c.OwnerID
 	}
 	return commentResponse{
-		ID:         c.ID,
-		DocID:      c.DocID,
-		Author:     c.Author,
-		Body:       c.Body,
-		StartChar:  c.StartChar,
-		EndChar:    c.EndChar,
-		QuotedText: c.QuotedText,
-		ParentID:   c.ParentID,
-		IsMine:     isMine,
-		Resolved:   c.Resolved,
-		CreatedAt:  c.CreatedAt.UTC().Format(time.RFC3339),
+		ID:          c.ID,
+		DocID:       c.DocID,
+		Author:      c.Author,
+		Body:        c.Body,
+		StartChar:   c.StartChar,
+		EndChar:     c.EndChar,
+		QuotedText:  c.QuotedText,
+		ParentID:    c.ParentID,
+		RevisionNum: c.RevisionNum,
+		IsMine:      isMine,
+		Resolved:    c.Resolved,
+		CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -78,6 +80,22 @@ type createCommentRequest struct {
 type patchCommentRequest struct {
 	Resolved *bool  `json:"resolved"`
 	Body     string `json:"body"`
+}
+
+// currentRevisionNum reports how many revisions the document has, which is the
+// version a comment written now is anchored against. Zero when the store keeps
+// no history, which is the self-hosted default.
+func (s *srv) currentRevisionNum(ctx context.Context, docID string) int {
+	rs, ok := s.store.(RevisionStore)
+	if !ok {
+		return 0
+	}
+	revs, err := rs.ListRevisions(ctx, docID)
+	if err != nil {
+		s.logger.Printf("comment revision number: %v", err)
+		return 0
+	}
+	return len(revs)
 }
 
 // commentBodyUpdater is a consumer-site interface for stores that support
@@ -117,14 +135,15 @@ func (s *srv) handleCreateComment(w http.ResponseWriter, r *http.Request) {
 
 	ownerID := ownerFromCtx(r.Context())
 	c, err := cs.AddComment(r.Context(), Comment{
-		DocID:      id,
-		Author:     req.Author,
-		OwnerID:    ownerID,
-		Body:       req.Body,
-		StartChar:  req.StartChar,
-		EndChar:    req.EndChar,
-		QuotedText: req.QuotedText,
-		ParentID:   req.ParentID,
+		DocID:       id,
+		Author:      req.Author,
+		OwnerID:     ownerID,
+		Body:        req.Body,
+		StartChar:   req.StartChar,
+		EndChar:     req.EndChar,
+		QuotedText:  req.QuotedText,
+		ParentID:    req.ParentID,
+		RevisionNum: s.currentRevisionNum(r.Context(), id),
 	})
 	if err != nil {
 		s.serverError(w, err)
