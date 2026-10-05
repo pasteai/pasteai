@@ -1097,7 +1097,17 @@
     }
     var left = Math.max(8, Math.min(rect.left + rect.width / 2 - pw / 2, vw - pw - 8));
     var top = rect.bottom + 8;
-    if (top + ph > vh - 8) top = Math.max(8, rect.top - ph - 8);
+    if (top + ph > vh - 8) top = rect.top - ph - 8;
+
+    // rect can be outside the viewport entirely — the page scrolled between
+    // selecting and clicking, or the quote sits past the fold — and both
+    // branches above then place the popover where its buttons cannot be
+    // reached. Clamp last so it is always on screen, and cap the height so a
+    // tall popover scrolls inside itself rather than off the bottom.
+    popover.style.maxHeight = (vh - 16) + 'px';
+    ph = Math.min(ph, vh - 16);
+    top = Math.max(8, Math.min(top, vh - ph - 8));
+
 
     popover.style.left = left + 'px';
     popover.style.top = top + 'px';
