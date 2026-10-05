@@ -896,6 +896,10 @@
   function replyPreviewHTML(c) {
     var replies = repliesOf(c.id);
     if (!replies.length) return '';
+    // Tally first: only two replies are previewed, so without it a thread of
+    // ten reads as a thread of two.
+    var tally = '<p class="comment-reply-tally">' + replies.length +
+                ' repl' + (replies.length === 1 ? 'y' : 'ies') + '</p>';
     var shown = replies.slice(0, 2).map(function (r) {
       return '<div class="comment-reply-preview">' +
                '<span class="comment-entry-author">' + esc(r.author || 'anonymous') + '</span> ' +
@@ -905,7 +909,7 @@
     var more = replies.length > 2
       ? '<span class="comment-reply-count">' + (replies.length - 2) + ' more</span>'
       : '';
-    return shown + more;
+    return tally + shown + more;
   }
 
   // relativeTime renders an ISO timestamp the way every comparable tool does.
