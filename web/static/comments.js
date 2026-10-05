@@ -11,8 +11,9 @@
   var _scrollToId = null;
   var _selectionTimer = null;
   var _activeId = null; // comment currently shown in the detail popout
+  var _filter = 'open';  // sidebar view: open | resolved | mine
+  var _pendingHashId = null; // comment named in the URL fragment, opened once loaded
   var _editing = false; // detail popout is in edit mode
-  var AUTHOR_KEY = 'pasteai_comment_author';
   var MAX_QUOTE = 500; // chars; prevent wrapping entire document
 
   // ── Permissions ───────────────────────────────────────────────────────────
@@ -29,6 +30,51 @@
 
   // canModerate: the author or the document owner may resolve/delete.
   function canModerate(c) { return canComment() && (!!c.is_mine || canManage()); }
+
+
+  // ── Dialogs ───────────────────────────────────────────────────────────────
+  // The page already has a styled modal and a toast; native alert()/confirm()
+  // look foreign next to them and block the page.
+
+  var _toastTimer = null;
+  function showToast(message) {
+    var hint = document.getElementById('comment-hint');
+    if (!hint) return;
+    hint.textContent = message;
+    hint.hidden = false;
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function () { hint.hidden = true; }, 4000);
+  }
+
+  // confirmAction opens the comment confirmation modal and calls onConfirm if
+  // the user accepts. Falls back to window.confirm if the modal is absent.
+  function confirmAction(message, confirmLabel, onConfirm) {
+    var overlay = document.getElementById('comment-confirm-overlay');
+    var msg = document.getElementById('comment-confirm-msg');
+    var ok = document.getElementById('comment-confirm-ok');
+    var cancel = document.getElementById('comment-confirm-cancel');
+    if (!overlay || !msg || !ok || !cancel) {
+      if (window.confirm(message)) onConfirm();
+      return;
+    }
+    msg.textContent = message;
+    ok.textContent = confirmLabel;
+
+    function close() {
+      overlay.classList.remove('open');
+      ok.onclick = null;
+      cancel.onclick = null;
+      document.removeEventListener('keydown', onKey);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    }
+    ok.onclick = function (e) { e.stopPropagation(); close(); onConfirm(); };
+    cancel.onclick = function (e) { e.stopPropagation(); close(); };
+    overlay.classList.add('open');
+    document.addEventListener('keydown', onKey);
+    cancel.focus();
+  }
 
   // ── Comment tree helpers ──────────────────────────────────────────────────
 
@@ -51,7 +97,15 @@
 
   function initComments(docId) {
     _docId = docId;
+    _pendingHashId = commentIdFromHash();
     loadComments();
+
+    // Someone following a link to a comment expects to land on it even if it
+    // is resolved, which the default view hides.
+    window.addEventListener('hashchange', function () {
+      var id = commentIdFromHash();
+      if (id) { _pendingHashId = id; renderAll(); }
+    });
 
     var article = document.querySelector('article.markdown-body');
     if (article) {
@@ -108,6 +162,10 @@
       var sidebar = document.getElementById('comment-sidebar');
       var toggle = document.getElementById('comment-toggle-btn');
       var detail = document.getElementById('comment-detail-popover');
+      // A synchronous re-render (click-to-edit) detaches the clicked node before
+      // this fires, so the containment check below would wrongly call it an
+      // outside click. Anything already detached came from our own UI.
+      if (e.target && e.target.isConnected === false) return;
       // Clicks inside the detail popout must not close the sidebar behind it.
       if (detail && !detail.hidden && (detail === e.target || detail.contains(e.target))) return;
       if (sidebar && !sidebar.hidden &&
@@ -152,12 +210,6 @@
       preview.textContent = '“' + q + '”';
     }
 
-    // Pre-fill author name from localStorage.
-    var authorInput = document.getElementById('comment-author-input');
-    if (authorInput && !authorInput.value) {
-      authorInput.value = localStorage.getItem(AUTHOR_KEY) || '';
-    }
-
     if (isMobile()) {
       if (scrim) scrim.hidden = false;
       openAsSheet(popover);
@@ -197,19 +249,15 @@
     if (!body) { if (ta) ta.focus(); return; }
     if (!_pendingText) return;
     if (_pendingStartChar < 0) {
-      alert('Selection is no longer valid — please select the text again.');
+      showToast('That selection is no longer valid — select the text again.');
       cancelAddComment();
       return;
     }
 
-    var authorInput = document.getElementById('comment-author-input');
-    var author = authorInput ? authorInput.value.trim() : '';
-    if (author) localStorage.setItem(AUTHOR_KEY, author);
-
     setSubmitLoading(true);
 
+    // No author field: the server attributes the comment to the signed-in user.
     postComment({
-      author: author,
       body: body,
       quoted_text: _pendingText,
       start_char: _pendingStartChar,
@@ -233,14 +281,14 @@
     }).then(function (r) {
       if (r.ok) return r.json().then(onSuccess);
       if (r.status === 401 || r.status === 403) {
-        alert('Please sign in to comment.');
+        showToast('Please sign in to comment.');
         onError();
         return;
       }
-      alert('Failed to submit comment — try again.');
+      showToast('Could not save that comment — try again.');
       onError();
     }).catch(function () {
-      alert('Network error — try again.');
+      showToast('Network error — try again.');
       onError();
     });
   }
@@ -257,9 +305,9 @@
       body: JSON.stringify(payload)
     }).then(function (r) {
       if (r.ok) { _editing = false; loadComments(); }
-      else if (r.status === 403) { alert('Not authorised to modify this comment.'); }
-      else { alert('Failed to update comment — try again.'); }
-    }).catch(function () { alert('Network error — try again.'); });
+      else if (r.status === 403) { showToast('You cannot change that comment.'); }
+      else { showToast('Could not update the comment — try again.'); }
+    }).catch(function () { showToast('Network error — try again.'); });
   }
 
   function deleteComment(cid) {
@@ -267,29 +315,30 @@
     var msg = replyCount
       ? 'Delete this comment and its ' + replyCount + ' repl' + (replyCount === 1 ? 'y' : 'ies') + '?'
       : 'Delete this comment?';
-    if (!confirm(msg)) return;
 
-    // Replies are deleted first so no orphans remain if the parent delete fails.
-    var replies = repliesOf(cid).map(function (c) { return c.id; });
-    var chain = Promise.resolve();
-    replies.forEach(function (rid) {
-      chain = chain.then(function () {
-        return fetch('/api/documents/' + _docId + '/comments/' + rid, { method: 'DELETE' });
+    confirmAction(msg, 'Delete', function () {
+      // Replies go first so no orphans remain if the parent delete fails.
+      var replies = repliesOf(cid).map(function (c) { return c.id; });
+      var chain = Promise.resolve();
+      replies.forEach(function (rid) {
+        chain = chain.then(function () {
+          return fetch('/api/documents/' + _docId + '/comments/' + rid, { method: 'DELETE' });
+        });
       });
-    });
 
-    chain.then(function () {
-      return fetch('/api/documents/' + _docId + '/comments/' + cid, { method: 'DELETE' });
-    }).then(function (r) {
-      if (r.status === 204) {
-        if (_activeId === cid) closeCommentDetail();
-        loadComments();
-      } else if (r.status === 403) {
-        alert('Not authorised to delete this comment.');
-      } else {
-        alert('Failed to delete comment — try again.');
-      }
-    }).catch(function () { alert('Network error — try again.'); });
+      chain.then(function () {
+        return fetch('/api/documents/' + _docId + '/comments/' + cid, { method: 'DELETE' });
+      }).then(function (r) {
+        if (r.status === 204) {
+          if (_activeId === cid) closeCommentDetail();
+          loadComments();
+        } else if (r.status === 403) {
+          showToast('You cannot delete that comment.');
+        } else {
+          showToast('Could not delete the comment — try again.');
+        }
+      }).catch(function () { showToast('Network error — try again.'); });
+    });
   }
 
   // ── Detail popout ─────────────────────────────────────────────────────────
@@ -336,7 +385,7 @@
       if (scrim) scrim.hidden = false;
       openAsSheet(popover);
     } else {
-      var mark = document.querySelector('mark.comment-anchor[data-cid="' + c.id + '"]');
+      var mark = document.querySelector('mark.comment-anchor[data-cids~="' + c.id + '"]');
       openAsPopover(popover, mark ? mark.getBoundingClientRect() : null);
     }
 
@@ -353,6 +402,8 @@
       '<div class="comment-detail-header">' +
         '<span class="comment-entry-author">' + esc(c.author || 'anonymous') + '</span>' +
         (c.resolved ? '<span class="comment-resolved-label">Resolved</span>' : '') +
+        '<button class="comment-btn comment-btn--link" onclick="copyCommentLink(\'' + c.id + '\')" ' +
+          'title="Copy a link to this comment">Link</button>' +
         '<button class="comment-sidebar-close" onclick="closeCommentDetail()" aria-label="Close comment">×</button>' +
       '</div>' +
       '<blockquote class="comment-entry-quote">' + esc(truncate(c.quoted_text, 160)) + '</blockquote>' +
@@ -375,15 +426,17 @@
 
   function bodyAndActionsHTML(c) {
     var actions = '';
-    if (canEdit(c)) {
-      actions += '<button class="comment-btn" onclick="startEditComment()">Edit</button>';
-    }
     if (canModerate(c)) {
       actions += '<button class="comment-btn" onclick="resolveComment(\'' + c.id + '\',' + !c.resolved + ')">' +
                  (c.resolved ? 'Unresolve' : 'Resolve') + '</button>' +
                  '<button class="comment-btn comment-btn--danger" onclick="deleteComment(\'' + c.id + '\')">Delete</button>';
     }
-    return '<p class="comment-detail-body">' + esc(c.body) + '</p>' +
+    // The author edits by clicking their own text — no separate Edit button.
+    var editable = canEdit(c);
+    return '<p class="comment-detail-body' + (editable ? ' comment-detail-body--editable' : '') + '"' +
+             (editable ? ' onclick="startEditComment()" title="Click to edit"' : '') + '>' +
+             esc(c.body) +
+           '</p>' +
            (actions ? '<div class="comment-entry-actions">' + actions + '</div>' : '');
   }
 
@@ -409,19 +462,24 @@
 
   function replyFormHTML(c) {
     if (!canComment()) return '';
-    var name = esc(localStorage.getItem(AUTHOR_KEY) || '');
     return '<div class="comment-reply-form">' +
-             '<div class="add-comment-field">' +
-               '<label for="comment-reply-input">Reply</label>' +
-               '<textarea id="comment-reply-input" rows="2" placeholder="Add a reply…"></textarea>' +
-             '</div>' +
-             '<div class="add-comment-field">' +
-               '<input id="comment-reply-author" type="text" placeholder="Your name (optional)" value="' + name + '">' +
-             '</div>' +
+             '<textarea id="comment-reply-input" rows="2" placeholder="Add a reply…"></textarea>' +
              '<div class="add-comment-actions">' +
                '<button id="comment-reply-btn" onclick="submitReply(\'' + c.id + '\')">Reply</button>' +
              '</div>' +
            '</div>';
+  }
+
+  // copyCommentLink puts a deep link to one comment on the clipboard, so review
+  // feedback can be pointed at directly.
+  function copyCommentLink(cid) {
+    var url = window.location.origin + window.location.pathname + '#comment-' + cid;
+    var done = function () { showToast('Link to this comment copied.'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(done, function () { showToast(url); });
+      return;
+    }
+    showToast(url);
   }
 
   function startEditComment() {
@@ -451,15 +509,10 @@
     var parent = byId(parentId);
     if (!parent) return;
 
-    var authorInput = document.getElementById('comment-reply-author');
-    var author = authorInput ? authorInput.value.trim() : '';
-    if (author) localStorage.setItem(AUTHOR_KEY, author);
-
     var btn = document.getElementById('comment-reply-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Replying…'; }
 
     postComment({
-      author: author,
       body: body,
       quoted_text: parent.quoted_text,
       start_char: parent.start_char,
@@ -486,24 +539,38 @@
       var p = m.parentNode;
       while (m.firstChild) p.insertBefore(m.firstChild, m);
       p.removeChild(m);
+      p.normalize();
     });
 
-    var roots = rootComments();
-    renderToggle(roots);
-
-    var list = document.getElementById('comment-list');
-    if (list) list.innerHTML = '';
-
-    roots.forEach(function (c) {
-      var range = findTextRange(c.quoted_text, c.start_char, c.end_char);
-      renderAnchor(c, range);
-      if (list) renderGutterEntry(list, c, range);
+    var flat = flattenArticle();
+    var placed = [];
+    rootComments().forEach(function (c) {
+      var at = flat ? locateQuote(flat, c) : null;
+      placed.push({ c: c, at: at });
     });
+
+    // Document order, the way every comparable tool lists comments. Stale ones
+    // have no position, so they sink to the bottom rather than sorting randomly.
+    placed.sort(function (a, b) {
+      if (!a.at && !b.at) return 0;
+      if (!a.at) return 1;
+      if (!b.at) return -1;
+      return a.at.start - b.at.start;
+    });
+
+    paintAnchors(placed);
+    renderToggle(placed);
+    renderSidebar(placed);
 
     // Keep the detail popout in sync after an edit, reply or resolve.
     if (_activeId) {
       if (byId(_activeId)) { setActiveComment(_activeId); renderDetail(); }
       else closeCommentDetail();
+    }
+
+    if (_pendingHashId) {
+      openPendingHashComment();
+      return;
     }
 
     if (_scrollToId) {
@@ -513,40 +580,35 @@
     }
   }
 
-  // renderToggle updates the floating button's label, count and action.
-  function renderToggle(roots) {
-    var toggle = document.getElementById('comment-toggle-btn');
-    if (!toggle) return;
-    // Nothing to show and nothing to add: keep the button out of the way.
-    if (roots.length === 0 && !canComment()) { toggle.hidden = true; return; }
-    toggle.hidden = false;
-    // Don't clobber the ready state if a selection is active.
-    if (toggle.classList.contains('comment-toggle-btn--ready')) return;
-
-    var openCount = roots.filter(function (c) { return !c.resolved; }).length;
-    if (roots.length === 0) {
-      toggle.textContent = 'Add a review';
-      toggle.onclick = showAddCommentHint;
-    } else {
-      toggle.innerHTML = 'Reviews <span id="comment-count">' + openCount + '</span>';
-      toggle.onclick = toggleCommentSidebar;
-    }
+  // commentIdFromHash reads a #comment-<id> deep link.
+  function commentIdFromHash() {
+    var m = /^#comment-(.+)$/.exec(window.location.hash || '');
+    return m ? m[1] : null;
   }
 
-  function showAddCommentHint() {
-    var hint = document.getElementById('comment-hint');
-    if (hint) {
-      hint.hidden = false;
-      setTimeout(function () { hint.hidden = true; }, 4000);
+  // openPendingHashComment honours a deep link after the comments have loaded,
+  // switching the filter if the target is hidden by the current view.
+  function openPendingHashComment() {
+    var id = _pendingHashId;
+    _pendingHashId = null;
+    var c = byId(id);
+    if (!c) return;
+    if (!matchesFilter(c)) {
+      _filter = c.resolved ? 'resolved' : 'open';
+      renderAll();
     }
+    openSidebar();
+    openCommentDetail(id);
   }
 
-  // findTextRange: locate the stored quote in the article DOM.
-  // Uses stored char offsets when available to disambiguate repeated text.
-  function findTextRange(text, startChar, endChar) {
+  // ── Anchoring ─────────────────────────────────────────────────────────────
+
+  // flattenArticle concatenates the article's text nodes so quotes can be
+  // located by offset. Wrapping anchors never changes this text, only the node
+  // boundaries, so offsets stay valid while anchors are painted.
+  function flattenArticle() {
     var article = document.querySelector('article.markdown-body');
-    if (!article || !text) return null;
-
+    if (!article) return null;
     var walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
     var nodes = [];
     var full = '';
@@ -555,55 +617,75 @@
       nodes.push({ node: node, start: full.length });
       full += node.nodeValue;
     }
+    return { article: article, nodes: nodes, full: full };
+  }
 
-    // Prefer stored offsets when they round-trip correctly.
-    var idx;
-    if (startChar >= 0 && endChar > startChar && full.slice(startChar, endChar) === text) {
-      idx = startChar;
-    } else {
-      idx = full.indexOf(text);
+  // locateQuote finds where a comment's quoted text sits now. `exact` is false
+  // when the stored offsets no longer line up AND the text appears more than
+  // once — we are then guessing which occurrence was meant, and the UI says so
+  // rather than presenting the guess as certain.
+  function locateQuote(flat, c) {
+    var text = c.quoted_text;
+    if (!text) return null;
+    if (c.start_char >= 0 && c.end_char > c.start_char &&
+        flat.full.slice(c.start_char, c.end_char) === text) {
+      return { start: c.start_char, end: c.end_char, exact: true };
     }
+    var idx = flat.full.indexOf(text);
     if (idx < 0) return null;
-
-    var end = idx + text.length;
-    var range = document.createRange();
-    var started = false;
-
-    for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i];
-      var nEnd = n.start + n.node.nodeValue.length;
-      if (!started && idx < nEnd) { range.setStart(n.node, idx - n.start); started = true; }
-      if (started && end <= nEnd) { range.setEnd(n.node, end - n.start); return range; }
-    }
-    return null;
+    return { start: idx, end: idx + text.length, exact: flat.full.indexOf(text, idx + 1) < 0 };
   }
 
-  // rangeToCharOffsets: compute start/end char positions within the article.
-  // More accurate than innerText.indexOf() for repeated text.
-  function rangeToCharOffsets(range, article) {
-    var walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
-    var pos = 0;
-    var startChar = -1;
-    var endChar = -1;
-    var node;
-    while ((node = walker.nextNode())) {
-      if (node === range.startContainer) startChar = pos + range.startOffset;
-      if (node === range.endContainer) { endChar = pos + range.endOffset; break; }
-      pos += node.nodeValue.length;
+  // paintAnchors wraps every located quote in a <mark>.
+  //
+  // Overlapping comments are split at their boundaries first, so one anchor can
+  // never tear another's <mark> apart. A segment covered by several comments
+  // carries all their ids, and lookups use [data-cids~="id"] because a single
+  // comment may now span more than one element.
+  function paintAnchors(placed) {
+    var located = placed.filter(function (p) { return p.at; });
+    if (!located.length) return;
+
+    var bounds = {};
+    located.forEach(function (p) { bounds[p.at.start] = true; bounds[p.at.end] = true; });
+    var edges = Object.keys(bounds).map(Number).sort(function (a, b) { return a - b; });
+
+    var segments = [];
+    for (var i = 0; i < edges.length - 1; i++) {
+      var from = edges[i];
+      var to = edges[i + 1];
+      var covering = located.filter(function (p) { return p.at.start <= from && p.at.end >= to; });
+      if (covering.length) segments.push({ start: from, end: to, covering: covering });
     }
-    return { start: startChar, end: endChar };
+
+    // Back to front: wrapping mutates the DOM, and later segments must be
+    // placed before the node boundaries they depend on are rewritten.
+    segments.sort(function (a, b) { return b.start - a.start; });
+    segments.forEach(wrapSegment);
   }
 
-  function renderAnchor(c, range) {
+  function wrapSegment(seg) {
+    var flat = flattenArticle();
+    if (!flat) return;
+    var range = rangeFromOffsets(flat, seg.start, seg.end);
     if (!range) return;
+
+    var comments = seg.covering.map(function (p) { return p.c; });
+    var allResolved = comments.every(function (c) { return c.resolved; });
+    var anyFuzzy = seg.covering.some(function (p) { return !p.at.exact; });
+
     var mark = document.createElement('mark');
-    mark.className = 'comment-anchor' + (c.resolved ? ' comment-anchor--resolved' : '');
-    mark.dataset.cid = c.id;
+    mark.className = 'comment-anchor' +
+      (allResolved ? ' comment-anchor--resolved' : '') +
+      (anyFuzzy ? ' comment-anchor--fuzzy' : '');
+    mark.dataset.cid = comments[0].id;
+    mark.dataset.cids = comments.map(function (c) { return c.id; }).join(' ');
+    if (anyFuzzy) mark.title = 'The document changed — this may not be the passage that was commented on';
+
     try {
       range.surroundContents(mark);
     } catch (_) {
-      // Cross-element range (e.g. spans <strong>, <code> boundary).
-      // Extract and re-insert so the mark wraps the fragment.
+      // Cross-element range (spans a <strong> or <code> boundary).
       try {
         mark.appendChild(range.extractContents());
         range.insertNode(mark);
@@ -611,22 +693,111 @@
         return;
       }
     }
-    mark.addEventListener('mouseenter', function () { highlightEntry(c.id, true); });
-    mark.addEventListener('mouseleave', function () { highlightEntry(c.id, false); });
-    // Clicking an anchor opens the sidebar and marks the matching entry.
+
+    var cid = comments[0].id;
+    mark.addEventListener('mouseenter', function () { highlightEntry(cid, true); });
+    mark.addEventListener('mouseleave', function () { highlightEntry(cid, false); });
     mark.addEventListener('click', function (e) {
       e.stopPropagation();
       openSidebar();
-      setActiveComment(c.id);
+      setActiveComment(cid);
       requestAnimationFrame(function () {
-        var entry = document.getElementById('comment-entry-' + c.id);
+        var entry = document.getElementById('comment-entry-' + cid);
         if (entry) entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       });
     });
   }
 
-  function renderGutterEntry(list, c, range) {
-    var isStale = !range;
+  function rangeFromOffsets(flat, start, end) {
+    var range = document.createRange();
+    var started = false;
+    for (var i = 0; i < flat.nodes.length; i++) {
+      var n = flat.nodes[i];
+      var nEnd = n.start + n.node.nodeValue.length;
+      if (!started && start < nEnd) { range.setStart(n.node, start - n.start); started = true; }
+      if (started && end <= nEnd) { range.setEnd(n.node, end - n.start); return range; }
+    }
+    return null;
+  }
+
+  // ── Sidebar ───────────────────────────────────────────────────────────────
+
+  // renderToggle updates the floating button's label, count and action.
+  function renderToggle(placed) {
+    var toggle = document.getElementById('comment-toggle-btn');
+    if (!toggle) return;
+    // Nothing to show and nothing to add: keep the button out of the way.
+    if (placed.length === 0 && !canComment()) { toggle.hidden = true; return; }
+    toggle.hidden = false;
+    // Don't clobber the ready state if a selection is active.
+    if (toggle.classList.contains('comment-toggle-btn--ready')) return;
+
+    var openCount = placed.filter(function (p) { return !p.c.resolved; }).length;
+    if (placed.length === 0) {
+      toggle.textContent = 'Add a comment';
+      toggle.onclick = showAddCommentHint;
+    } else {
+      toggle.innerHTML = 'Comments <span id="comment-count">' + openCount + '</span>';
+      toggle.onclick = toggleCommentSidebar;
+    }
+  }
+
+  // matchesFilter decides whether a comment belongs in the current view.
+  // Resolved comments drop out of the default view, which is what makes
+  // resolving feel like it did something.
+  function matchesFilter(c) {
+    if (_filter === 'resolved') return !!c.resolved;
+    if (_filter === 'mine') return !!c.is_mine;
+    return !c.resolved;
+  }
+
+  function renderSidebar(placed) {
+    var list = document.getElementById('comment-list');
+    if (!list) return;
+    list.innerHTML = '';
+
+    renderFilters(placed);
+
+    var shown = placed.filter(function (p) { return matchesFilter(p.c); });
+    if (!shown.length) {
+      list.innerHTML = '<p class="comment-empty">' + esc(emptyMessage()) + '</p>';
+      return;
+    }
+    shown.forEach(function (p) { renderGutterEntry(list, p.c, p.at); });
+  }
+
+  function emptyMessage() {
+    if (_filter === 'resolved') return 'No resolved comments.';
+    if (_filter === 'mine') return 'You have not commented on this document.';
+    return 'No open comments.';
+  }
+
+  function renderFilters(placed) {
+    var bar = document.getElementById('comment-filters');
+    if (!bar) return;
+    var counts = {
+      open: placed.filter(function (p) { return !p.c.resolved; }).length,
+      resolved: placed.filter(function (p) { return p.c.resolved; }).length,
+      mine: placed.filter(function (p) { return p.c.is_mine; }).length
+    };
+    var chips = [['open', 'Open'], ['resolved', 'Resolved'], ['mine', 'Mine']];
+    bar.innerHTML = chips.map(function (f) {
+      var key = f[0];
+      return '<button class="comment-filter' + (_filter === key ? ' comment-filter--on' : '') +
+             '" data-filter="' + key + '">' + f[1] + ' ' + counts[key] + '</button>';
+    }).join('');
+    bar.querySelectorAll('.comment-filter').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        _filter = btn.getAttribute('data-filter');
+        renderAll();
+      });
+    });
+  }
+
+  function renderGutterEntry(list, c, at) {
+    var isStale = !at;
+    var isFuzzy = !!at && !at.exact;
     var div = document.createElement('div');
     div.id = 'comment-entry-' + c.id;
     div.className = 'comment-entry' +
@@ -636,24 +807,19 @@
     div.setAttribute('role', 'button');
     div.setAttribute('tabindex', '0');
 
-    var staleHTML = isStale
-      ? '<span class="comment-stale-label" title="The document was edited — this text no longer exists">⚠ Text changed</span>'
-      : '';
-    var replyCount = repliesOf(c.id).length;
-    var replyHTML = replyCount
-      ? '<span class="comment-reply-count">' + replyCount + ' repl' + (replyCount === 1 ? 'y' : 'ies') + '</span>'
-      : '';
-
     div.innerHTML =
       '<div class="comment-entry-header">' +
         '<span class="comment-entry-author">' + esc(c.author || 'anonymous') + '</span>' +
-        staleHTML +
+        '<span class="comment-entry-time" title="' + esc(c.created_at || '') + '">' +
+          esc(relativeTime(c.created_at)) +
+        '</span>' +
+        anchorStateHTML(c, isStale, isFuzzy) +
       '</div>' +
       '<blockquote class="comment-entry-quote" title="' + esc(c.quoted_text) + '">' +
         esc(truncate(c.quoted_text, 80)) +
       '</blockquote>' +
       '<p class="comment-entry-body">' + esc(c.body) + '</p>' +
-      replyHTML;
+      replyPreviewHTML(c);
 
     div.addEventListener('mouseenter', function () { highlightAnchor(c.id, true); });
     div.addEventListener('mouseleave', function () { highlightAnchor(c.id, false); });
@@ -669,6 +835,62 @@
     list.appendChild(div);
   }
 
+  // anchorStateHTML explains a lost or uncertain anchor, naming the version the
+  // comment was written against so it is a lead rather than a dead end.
+  function anchorStateHTML(c, isStale, isFuzzy) {
+    if (isStale) {
+      var since = c.revision_num ? ' since v' + c.revision_num : '';
+      var label = '⚠ Text changed' + since;
+      return '<span class="comment-stale-label" title="The passage this comment quoted is no longer in the document">' +
+             esc(label) + revisionLinkHTML(c) + '</span>';
+    }
+    if (isFuzzy) {
+      return '<span class="comment-stale-label comment-stale-label--fuzzy" ' +
+             'title="The document changed and this text appears more than once — the highlight may be on the wrong one">' +
+             '≈ Moved?</span>';
+    }
+    return '';
+  }
+
+  function revisionLinkHTML(c) {
+    if (!window._pasteaiShowRevisions) return '';
+    return ' <a class="comment-revision-link" href="/d/' + esc(_docId) + '/revisions" ' +
+           'onclick="event.stopPropagation()">history</a>';
+  }
+
+  // replyPreviewHTML shows the start of the thread in the sidebar, so reading a
+  // short reply does not need a second click.
+  function replyPreviewHTML(c) {
+    var replies = repliesOf(c.id);
+    if (!replies.length) return '';
+    var shown = replies.slice(0, 2).map(function (r) {
+      return '<div class="comment-reply-preview">' +
+               '<span class="comment-entry-author">' + esc(r.author || 'anonymous') + '</span> ' +
+               esc(truncate(r.body, 70)) +
+             '</div>';
+    }).join('');
+    var more = replies.length > 2
+      ? '<span class="comment-reply-count">' + (replies.length - 2) + ' more</span>'
+      : '';
+    return shown + more;
+  }
+
+  // relativeTime renders an ISO timestamp the way every comparable tool does.
+  function relativeTime(iso) {
+    if (!iso) return '';
+    var then = Date.parse(iso);
+    if (isNaN(then)) return '';
+    var secs = Math.floor((Date.now() - then) / 1000);
+    if (secs < 60) return 'just now';
+    var mins = Math.floor(secs / 60);
+    if (mins < 60) return mins + 'm ago';
+    var hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + 'h ago';
+    var days = Math.floor(hours / 24);
+    if (days < 30) return days + 'd ago';
+    return new Date(then).toLocaleDateString();
+  }
+
   // setActiveComment marks one comment as selected in both the document
   // and the sidebar, clearing any previous selection. Pass null to clear.
   function setActiveComment(cid) {
@@ -681,12 +903,13 @@
     if (!cid) return;
     var entry = document.getElementById('comment-entry-' + cid);
     if (entry) entry.classList.add('comment-entry--selected');
-    var mark = document.querySelector('mark.comment-anchor[data-cid="' + cid + '"]');
-    if (mark) mark.classList.add('comment-anchor--selected');
+    document.querySelectorAll('mark.comment-anchor[data-cids~="' + cid + '"]').forEach(function (m) {
+      m.classList.add('comment-anchor--selected');
+    });
   }
 
   function scrollToAnchor(cid) {
-    var mark = document.querySelector('mark.comment-anchor[data-cid="' + cid + '"]');
+    var mark = document.querySelector('mark.comment-anchor[data-cids~="' + cid + '"]');
     if (mark) mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
@@ -696,8 +919,9 @@
   }
 
   function highlightAnchor(cid, on) {
-    var el = document.querySelector('mark.comment-anchor[data-cid="' + cid + '"]');
-    if (el) el.classList.toggle('comment-anchor--active', on);
+    document.querySelectorAll('mark.comment-anchor[data-cids~="' + cid + '"]').forEach(function (el) {
+      el.classList.toggle('comment-anchor--active', on);
+    });
   }
 
   function onSelectionChange() {
@@ -713,7 +937,13 @@
     var article = document.querySelector('article.markdown-body');
     if (!article || !article.contains(range.commonAncestorContainer)) { hideFloatBtn(); return; }
     var text = sel.toString().trim();
-    if (!text || text.length > MAX_QUOTE) { hideFloatBtn(); return; }
+    if (!text) { hideFloatBtn(); return; }
+    if (text.length > MAX_QUOTE) {
+      // Silently offering nothing reads as "commenting is broken".
+      hideFloatBtn();
+      warnSelectionTooLong();
+      return;
+    }
 
     _pendingText = text;
     var offsets = rangeToCharOffsets(range, article);
@@ -752,6 +982,16 @@
     return (add && !add.hidden) || (detail && !detail.hidden);
   }
 
+  // warnSelectionTooLong explains the cap, at most once every few seconds —
+  // selectionchange fires continuously while dragging.
+  var _lastLongWarning = 0;
+  function warnSelectionTooLong() {
+    var now = Date.now();
+    if (now - _lastLongWarning < 5000) return;
+    _lastLongWarning = now;
+    showToast('That selection is too long — comment on up to ' + MAX_QUOTE + ' characters.');
+  }
+
   function hideFloatBtn() {
     var btn = document.getElementById('add-comment-float-btn');
     if (btn) btn.hidden = true;
@@ -762,7 +1002,7 @@
     var toggle = document.getElementById('comment-toggle-btn');
     if (!toggle || !toggle.classList.contains('comment-toggle-btn--ready')) return;
     toggle.classList.remove('comment-toggle-btn--ready');
-    toggle.setAttribute('aria-label', 'Open reviews');
+    toggle.setAttribute('aria-label', 'Open comments');
     renderToggle(rootComments());
   }
 
@@ -814,6 +1054,7 @@
     var left = Math.max(8, Math.min(rect.left + rect.width / 2 - pw / 2, vw - pw - 8));
     var top = rect.bottom + 8;
     if (top + ph > vh - 8) top = Math.max(8, rect.top - ph - 8);
+
     popover.style.left = left + 'px';
     popover.style.top = top + 'px';
   }
@@ -863,4 +1104,5 @@
   window.cancelEditComment = cancelEditComment;
   window.saveEditComment = saveEditComment;
   window.submitReply = submitReply;
+  window.copyCommentLink = copyCommentLink;
 })();

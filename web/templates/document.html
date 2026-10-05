@@ -4,12 +4,14 @@
 <style>{{.ChromaCSS}}</style>
 {{if .HasComments}}<style>
 /* ── Comment sidebar ─────────────────────────── */
-.comment-toggle-btn{position:fixed;bottom:24px;right:24px;z-index:100;padding:8px 14px;border-radius:20px;border:1px solid var(--color-border,#d0d7de);background:var(--color-surface-card,#fff);color:var(--color-text,#1f2328);font-size:13px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12);-webkit-touch-callout:none;user-select:none;transition:background .15s,color .15s,border-color .15s}
+.comment-toggle-btn{position:fixed;bottom:24px;right:24px;z-index:100;padding:8px 14px;border-radius:20px;border:1px solid var(--color-border,#d0d7de);background:var(--color-surface,#fff);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);;color:var(--color-text,#1f2328);font-size:13px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12);-webkit-touch-callout:none;user-select:none;transition:background .15s,color .15s,border-color .15s}
 .comment-toggle-btn--ready{background:var(--color-accent,#0969da);color:#fff;border-color:var(--color-accent,#0969da);box-shadow:0 2px 12px rgba(9,105,218,.35)}
 /* P0 fix: sidebar is a fixed drawer; scrim covers the rest of the page on mobile */
 .comment-sidebar-scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:98}
 @media(max-width:639px){.comment-sidebar-scrim:not([hidden]){display:block}}
-.comment-sidebar{position:fixed;top:0;right:0;width:min(300px,85vw);height:100vh;overflow-y:auto;border-left:1px solid var(--color-border,#d0d7de);background:var(--color-surface-card,#fff);z-index:99;padding:16px;box-shadow:-4px 0 16px rgba(0,0,0,.12)}
+/* Starts below the 56px fixed nav: at top:0 the panel's header and its close
+   button sit underneath the nav, which made the close button unclickable. */
+.comment-sidebar{position:fixed;top:56px;right:0;width:min(300px,85vw);height:calc(100vh - 56px);overflow-y:auto;border-left:1px solid var(--color-border,#d0d7de);background:var(--color-surface,#fff);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);z-index:99;padding:16px;box-shadow:-4px 0 16px rgba(0,0,0,.25)}
 .comment-sidebar-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-weight:600;font-size:14px}
 .comment-sidebar-close{background:none;border:none;cursor:pointer;font-size:20px;line-height:1;color:var(--color-text-muted,#57606a);padding:4px 8px}
 .comment-entry{border:1px solid var(--color-border,#d0d7de);border-radius:6px;padding:10px;margin-bottom:8px;font-size:13px;cursor:default;transition:border-color .15s}
@@ -23,26 +25,45 @@
 .comment-entry-quote{margin:4px 0;padding:4px 8px;border-left:3px solid var(--color-border,#d0d7de);font-size:12px;color:var(--color-text-muted,#57606a);white-space:pre-wrap;word-break:break-word;overflow-wrap:break-word}
 .comment-entry-body{margin:6px 0 8px;word-break:break-word;overflow-wrap:break-word}
 .comment-entry-actions{display:flex;gap:6px;flex-wrap:wrap}
-.comment-btn{padding:3px 8px;border:1px solid var(--color-border,#d0d7de);border-radius:4px;background:none;cursor:pointer;font-size:12px}
-.comment-btn--danger{color:#cf222e;border-color:#cf222e}
+.comment-btn{padding:5px 12px;border:1px solid var(--color-border,#d0d7de);border-radius:6px;background:var(--color-surface-card-strong,#fff);color:var(--color-text,#1f2328);cursor:pointer;font-size:12px;font-weight:500;line-height:1.4;transition:background .15s,border-color .15s}
+.comment-btn:hover{border-color:var(--color-accent,#0969da)}
+.comment-btn--danger{color:#cf222e;border-color:rgba(207,34,46,.5)}
+.comment-btn--danger:hover{background:rgba(207,34,46,.12);border-color:#cf222e}
 /* Sidebar entries are clickable and open the detail popout */
 .comment-entry{cursor:pointer}
 .comment-entry--selected{border-color:var(--color-accent,#0969da);box-shadow:0 0 0 2px rgba(9,105,218,.25)}
 .comment-entry:focus-visible{outline:2px solid var(--color-accent,#0969da);outline-offset:2px}
 .comment-reply-count{font-size:11px;color:var(--color-text-muted,#57606a)}
+/* Filter chips: resolved comments leave the default view, so resolving a
+   comment visibly does something. */
+.comment-filters{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}
+.comment-filter{padding:3px 9px;border:1px solid var(--color-border,#d0d7de);border-radius:999px;background:none;color:var(--color-text-muted,#57606a);cursor:pointer;font-size:11px;font-weight:500}
+.comment-filter:hover{border-color:var(--color-accent,#0969da)}
+.comment-filter--on{background:var(--color-accent,#0969da);border-color:var(--color-accent,#0969da);color:#fff}
+.comment-empty{margin:8px 0;font-size:12px;color:var(--color-text-muted,#57606a)}
+.comment-entry-time{font-size:11px;color:var(--color-text-muted,#57606a);margin-left:auto}
+.comment-revision-link{margin-left:4px;text-decoration:underline}
+.comment-stale-label--fuzzy{color:#8250df;background:#f5f0ff;border-color:#a371f7}
+.comment-reply-preview{font-size:12px;color:var(--color-text-muted,#57606a);border-left:2px solid var(--color-border,#d0d7de);padding-left:6px;margin-top:4px;word-break:break-word}
+.comment-btn--link{padding:2px 8px;font-size:11px}
+/* An anchor matched by text search after the document changed: the highlight
+   may be on the wrong occurrence, so it is visibly less certain. */
+mark.comment-anchor--fuzzy{background:rgba(160,120,255,.35);border-bottom:1px dashed rgba(130,80,223,.9)}
 /* ── Comment detail popout ───────────────────── */
-.comment-detail-popover{max-height:min(70vh,560px);overflow-y:auto}
+.comment-detail-popover{max-height:min(70vh,520px);overflow-y:auto}
+.comment-detail-body--editable{cursor:text;border-radius:4px;padding:2px 4px;margin-left:-4px;transition:background .15s}
+.comment-detail-body--editable:hover{background:var(--color-surface-card,rgba(127,127,127,.12))}
 .comment-detail-header{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:13px}
 .comment-detail-header .comment-sidebar-close{margin-left:auto}
-.comment-detail-body{margin:8px 0;font-size:13px;word-break:break-word;overflow-wrap:break-word;white-space:pre-wrap}
+.comment-detail-body{margin:6px 0 8px;font-size:13px;word-break:break-word;overflow-wrap:break-word;white-space:pre-wrap}
 .comment-resolved-label{font-size:11px;color:#1a7f37;background:#dafbe1;border:1px solid #4ac26b;border-radius:3px;padding:1px 5px}
-.comment-replies{margin-top:12px;border-top:1px solid var(--color-border,#d0d7de);padding-top:10px}
+.comment-replies{margin-top:8px;border-top:1px solid var(--color-border,#d0d7de);padding-top:8px}
 .comment-replies-title{margin:0 0 6px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-text-muted,#57606a)}
 .comment-reply{border-left:2px solid var(--color-border,#d0d7de);padding:4px 0 4px 8px;margin-bottom:8px;font-size:13px}
 .comment-reply .comment-entry-body{margin:2px 0 6px;white-space:pre-wrap}
-.comment-reply-form{margin-top:10px;border-top:1px solid var(--color-border,#d0d7de);padding-top:10px}
+.comment-reply-form{margin-top:8px;border-top:1px solid var(--color-border,#d0d7de);padding-top:8px}
 /* P1 discoverability: hint toast */
-.comment-hint{position:fixed;bottom:68px;right:24px;z-index:101;padding:8px 14px;border-radius:8px;background:var(--color-surface-card,#fff);border:1px solid var(--color-border,#d0d7de);font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.12);max-width:220px}
+.comment-hint{position:fixed;bottom:68px;right:24px;z-index:101;padding:8px 14px;border-radius:8px;background:var(--color-surface,#fff);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);;border:1px solid var(--color-border,#d0d7de);font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.12);max-width:220px}
 /* ── Anchors ─────────────────────────────────── */
 mark.comment-anchor{background:rgba(255,220,0,.4);border-radius:2px;cursor:pointer;transition:background .15s,box-shadow .15s}
 mark.comment-anchor--active,mark.comment-anchor:hover{background:rgba(255,180,0,.7);box-shadow:0 0 0 2px rgba(255,180,0,.4)}
@@ -52,7 +73,10 @@ mark.comment-anchor--selected{background:rgba(255,180,0,.85);box-shadow:0 0 0 2p
 /* ── Selection float button ──────────────────── */
 .add-comment-float-btn{position:fixed;z-index:110;padding:6px 14px;border-radius:16px;border:none;background:var(--color-accent,#0969da);color:#fff;font-size:13px;font-weight:500;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);-webkit-touch-callout:none;user-select:none}
 /* ── Add-comment popover (desktop) ──────────── */
-.add-comment-popover{position:fixed;z-index:120;width:min(300px,calc(100vw - 16px));background:var(--color-surface-card,#fff);border:1px solid var(--color-border,#d0d7de);border-radius:8px;padding:14px;box-shadow:0 4px 20px rgba(0,0,0,.18)}
+/* Anything that floats over the document uses --color-surface (near-opaque,
+   as .modal-card does), never --color-surface-card: that one is translucent by
+   design (alpha .65) and lets the text behind bleed through. */
+.add-comment-popover{position:fixed;z-index:120;width:min(300px,calc(100vw - 16px));background:var(--color-surface,#fff);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--color-border,#d0d7de);border-radius:10px;padding:12px;box-shadow:0 8px 28px rgba(0,0,0,.35)}
 /* Mobile: full-width bottom sheet; JS controls `bottom` via visualViewport */
 @media(max-width:639px){
   .add-comment-popover{
@@ -66,7 +90,7 @@ mark.comment-anchor--selected{background:rgba(255,180,0,.85);box-shadow:0 0 0 2p
   }
 }
 .add-comment-popover label{display:block;font-size:12px;font-weight:600;color:var(--color-text-muted,#57606a);margin-bottom:3px}
-.add-comment-popover textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:80px;padding:7px 9px;border:1px solid var(--color-border,#d0d7de);border-radius:4px;font-size:13px;font-family:inherit;background:var(--color-surface,#f6f8fa);color:var(--color-text,#1f2328)}
+.add-comment-popover textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:56px;padding:7px 9px;border:1px solid var(--color-border,#d0d7de);border-radius:4px;font-size:13px;font-family:inherit;background:var(--color-surface,#f6f8fa);color:var(--color-text,#1f2328)}
 .add-comment-popover input[type=text]{width:100%;box-sizing:border-box;padding:6px 9px;border:1px solid var(--color-border,#d0d7de);border-radius:4px;font-size:13px;font-family:inherit;background:var(--color-surface,#f6f8fa);color:var(--color-text,#1f2328)}
 .add-comment-field{margin-top:8px}
 .add-comment-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}
@@ -78,7 +102,7 @@ mark.comment-anchor--selected{background:rgba(255,180,0,.85);box-shadow:0 0 0 2p
 .add-comment-scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:119;touch-action:none}
 @media(max-width:639px){.add-comment-scrim:not([hidden]){display:block}}
 /* Quoted text preview shown inside the comment form */
-.add-comment-quote-preview{margin:0 0 10px;padding:6px 10px;border-left:3px solid var(--color-accent,#0969da);font-size:12px;color:var(--color-text-muted,#57606a);word-break:break-word;overflow-wrap:break-word;font-style:italic}
+.add-comment-quote-preview{margin:0 0 8px;padding:4px 8px;border-left:3px solid var(--color-accent,#0969da);font-size:12px;color:var(--color-text-muted,#57606a);word-break:break-word;overflow-wrap:break-word;font-style:italic}
 </style>{{end}}
 {{if .PageURL}}<link rel="canonical" href="{{.PageURL}}">{{end}}
 {{if .Description}}<meta name="description" content="{{.Description}}">{{end}}
@@ -208,13 +232,13 @@ mark.comment-anchor--selected{background:rgba(255,180,0,.85);box-shadow:0 0 0 2p
 
 {{if .HasComments}}
 <!-- P1 discoverability: always visible, label changes when 0 comments -->
-<button id="comment-toggle-btn" class="comment-toggle-btn" hidden onclick="toggleCommentSidebar()" aria-label="Open reviews">
-  Reviews <span id="comment-count">…</span>
+<button id="comment-toggle-btn" class="comment-toggle-btn" hidden onclick="toggleCommentSidebar()" aria-label="Open comments">
+  Comments <span id="comment-count">…</span>
 </button>
 
 <!-- P1 discoverability: hint toast shown when no comments yet -->
 <div id="comment-hint" class="comment-hint" hidden role="status">
-  Select any text in the document to add a review.
+  Select any text in the document to add a comment.
 </div>
 
 <!-- P0 mobile fix: scrim closes sidebar on tap outside -->
@@ -222,9 +246,10 @@ mark.comment-anchor--selected{background:rgba(255,180,0,.85);box-shadow:0 0 0 2p
 
 <div id="comment-sidebar" class="comment-sidebar" hidden>
   <div class="comment-sidebar-header">
-    <span>Reviews</span>
-    <button class="comment-sidebar-close" onclick="toggleCommentSidebar()" aria-label="Close reviews panel">×</button>
+    <span>Comments</span>
+    <button class="comment-sidebar-close" onclick="toggleCommentSidebar()" aria-label="Close comments panel">×</button>
   </div>
+  <div id="comment-filters" class="comment-filters"></div>
   <div id="comment-list"></div>
 </div>
 
@@ -247,13 +272,20 @@ mark.comment-anchor--selected{background:rgba(255,180,0,.85);box-shadow:0 0 0 2p
     <label for="comment-body-input">Comment</label>
     <textarea id="comment-body-input" placeholder="Describe your feedback or suggestion…" rows="3"></textarea>
   </div>
-  <div class="add-comment-field">
-    <label for="comment-author-input">Your name <span style="font-weight:400">(optional)</span></label>
-    <input id="comment-author-input" type="text" placeholder="Anonymous">
-  </div>
   <div class="add-comment-actions">
     <button onclick="cancelAddComment()">Cancel</button>
     <button onclick="submitAddComment()">Submit</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="comment-confirm-overlay">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="comment-confirm-title">
+    <h3 class="modal-title" id="comment-confirm-title">Delete comment?</h3>
+    <p class="modal-body" id="comment-confirm-msg"></p>
+    <div class="modal-actions">
+      <button class="modal-btn modal-btn--cancel" id="comment-confirm-cancel">Cancel</button>
+      <button class="modal-btn modal-btn--danger" id="comment-confirm-ok">Delete</button>
+    </div>
   </div>
 </div>
 
@@ -261,6 +293,7 @@ mark.comment-anchor--selected{background:rgba(255,180,0,.85);box-shadow:0 0 0 2p
 <script>
 {{if .ShowDelete}}window._pasteaiCanManageComments = true;{{end}}
 {{if .CanComment}}window._pasteaiCanComment = true;{{end}}
+{{if .ShowRevisions}}window._pasteaiShowRevisions = true;{{end}}
 initComments('{{.Document.ID}}');
 </script>
 {{end}}
