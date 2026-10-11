@@ -5,10 +5,10 @@ go 1.26
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/google/uuid v1.6.0
-	github.com/mark3labs/mcp-go v0.56.0
+	github.com/mark3labs/mcp-go v1.1.1
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/pmezard/go-difflib v1.0.0
-	github.com/yuin/goldmark v1.8.4
+	github.com/yuin/goldmark v1.8.6
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	go.etcd.io/bbolt v1.5.0
 )
